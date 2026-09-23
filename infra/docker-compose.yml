@@ -1,0 +1,13 @@
+services:
+  bmkg-mock:
+    build: ./services/bmkg-mock
+    ports: ["8081:8081"]
+    networks: [backend]
+  pvmbg-mock:
+    build: ./services/pvmbg-mock
+    ports: ["8082:8082"]
+    networks: [backend]
+  # TODO:add yang belum
+networks:
+  backend:
+    internal: false
