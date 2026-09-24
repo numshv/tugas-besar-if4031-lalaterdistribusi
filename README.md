@@ -12,7 +12,7 @@ implemented yet.
 | Kafka (KRaft) + Kafka UI, topic created on startup | done |
 | MongoDB + init script + volcano reference table | done |
 | Compose orchestration, health checks, network isolation | done |
-| bmkg-mock, pvmbg-mock | stub |
+| bmkg-mock, pvmbg-mock | done |
 | aggregator, canonical store access, consumers | stub |
 | auth-service, client-api | stub |
 
@@ -68,6 +68,77 @@ change `CLIENT_API_HOST_PORT` if it is.
 Every variable with an example value lives in [`.env.example`](.env.example).
 Credentials, JWT signing keys, and per-environment settings are read only from
 `.env` and `infra/keys/`; neither is committed.
+
+`PVMBG_TOKEN` must start with `pvmbg_v1.` — the mock refuses to start otherwise,
+so a misconfigured credential surfaces at boot rather than during a demo.
+
+## Source mocks
+
+| Agency | Endpoint | Credential |
+| --- | --- | --- |
+| BMKG | `GET /seismic-events?since=` | `X-BMKG-Key: <key>` |
+| BMKG | `GET /tsunami-warnings?since=` | `X-BMKG-Key: <key>` |
+| PVMBG | `GET /volcanic-reports?since=` | `Authorization: Bearer pvmbg_v1.<secret>` |
+| PVMBG | `POST /admin/schema-version` | `X-PVMBG-Admin-Token: <token>` |
+| PVMBG | `POST /admin/outage` | `X-PVMBG-Admin-Token: <token>` |
+| both | `GET /health` | none |
+
+- `since` is an RFC 3339 timestamp and is **inclusive** (`>= since`). Omitting it
+  returns everything; an unparseable value returns 400. Boundary records are
+  re-delivered on every poll, which is safe because `hazard_id` is deterministic.
+- `/tsunami-warnings` filters on the **related event's** `occurred_at`. The
+  contract gives `TsunamiWarning` no timestamp of its own, and `estimated_arrival`
+  describes when a wave arrives, not when the record appeared.
+- Credentials are agency-scoped. A BMKG key presented to PVMBG fails the token
+  structure check; a PVMBG token presented to BMKG fails the key comparison.
+- The PVMBG admin plane uses its own header and keeps working during an outage —
+  it is the only way to end one. Outage is operator-controlled; there is no timer.
+- PVMBG `/health` reports its current `outage` and `schema_version`.
+- Mock state is in memory. Restarting a mock resets generated records, schema
+  version, and outage back to the values in `.env`.
+
+## Test scenarios
+
+```bash
+set -a; . ./.env; set +a
+B="http://localhost:$BMKG_HOST_PORT"; K="X-BMKG-Key: $BMKG_API_KEY"
+P="http://localhost:$PVMBG_HOST_PORT"
+T="Authorization: Bearer $PVMBG_TOKEN"
+A="X-PVMBG-Admin-Token: $PVMBG_ADMIN_TOKEN"
+C="docker compose --env-file .env -f infra/docker-compose.yml"
+```
+
+Problem 1 — additive schema change while the system is running:
+
+```bash
+curl -s -H "$T" "$P/volcanic-reports"      # no confidence_level
+$C ps pvmbg-mock                            # note the uptime
+curl -s -X POST -H "$A" -d '{"version":2}' "$P/admin/schema-version"
+curl -s -H "$T" "$P/volcanic-reports"      # confidence_level present
+$C ps pvmbg-mock                            # uptime unchanged, no restart
+```
+
+Problem 2 — PVMBG outage and recovery:
+
+```bash
+curl -s -X POST -H "$A" -d '{"enabled":true}' "$P/admin/outage"
+curl -s -w ' -> %{http_code} in %{time_total}s\n' -H "$T" "$P/volcanic-reports"
+curl -s -o /dev/null -w 'BMKG still serving: %{http_code}\n' -H "$K" "$B/seismic-events"
+curl -s "$P/health"
+curl -s -X POST -H "$A" -d '{"enabled":false}' "$P/admin/outage"
+curl -s -o /dev/null -w 'recovered: %{http_code}\n' -H "$T" "$P/volcanic-reports"
+```
+
+Problem 3 — credentials do not cross agency boundaries:
+
+```bash
+curl -s -o /dev/null -w 'BMKG key at PVMBG: %{http_code}\n' -H "Authorization: Bearer $BMKG_API_KEY" "$P/volcanic-reports"
+curl -s -o /dev/null -w 'PVMBG token at BMKG: %{http_code}\n' -H "X-BMKG-Key: $PVMBG_TOKEN" "$B/seismic-events"
+```
+
+On PowerShell use `curl.exe` rather than `curl`, `NUL` rather than `/dev/null`,
+and escape JSON bodies as `'{\"version\":2}'` — PowerShell 5.1 strips unescaped
+quotes before they reach the executable.
 
 ## Canonical store isolation
 
