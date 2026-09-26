@@ -1,13 +1,318 @@
+name: bnpb-m1
+
+x-common-env: &common-env
+  LOG_LEVEL: ${LOG_LEVEL}
+  APP_ENV: ${APP_ENV}
+
 services:
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: bnpb-kafka
+    environment:
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID}
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks: [app-net]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+
+  kafka-init:
+    image: apache/kafka:3.9.0
+    container_name: bnpb-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+      KAFKA_TOPIC: ${KAFKA_TOPIC}
+      KAFKA_TOPIC_PARTITIONS: ${KAFKA_TOPIC_PARTITIONS}
+      KAFKA_TOPIC_RETENTION_MS: ${KAFKA_TOPIC_RETENTION_MS}
+    volumes:
+      - ./broker/create-topics.sh:/create-topics.sh:ro
+    command: ["/bin/sh", "/create-topics.sh"]
+    networks: [app-net]
+    restart: "no"
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    container_name: bnpb-kafka-ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_CLUSTERS_0_NAME: bnpb-m1
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      DYNAMIC_CONFIG_ENABLED: "true"
+    ports:
+      - "${KAFKA_UI_PORT}:8080"
+    networks: [app-net]
+
+  mongodb:
+    image: mongo:7.0
+    container_name: bnpb-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGO_DB}
+      MONGO_DB: ${MONGO_DB}
+      MONGO_APP_USERNAME: ${MONGO_APP_USERNAME}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD}
+    volumes:
+      - mongo-data:/data/db
+      - ./store/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    networks: [store-net]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand({ping:1}).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
   bmkg-mock:
-    build: ./services/bmkg-mock
-    ports: ["8081:8081"]
-    networks: [backend]
+    build:
+      context: ..
+      dockerfile: services/bmkg-mock/Dockerfile
+    container_name: bnpb-bmkg-mock
+    environment:
+      <<: *common-env
+      BMKG_PORT: ${BMKG_PORT}
+      BMKG_API_KEY: ${BMKG_API_KEY}
+      BMKG_DELAY_MIN_MS: ${BMKG_DELAY_MIN_MS}
+      BMKG_DELAY_MAX_MS: ${BMKG_DELAY_MAX_MS}
+      BMKG_SEED_COUNT: ${BMKG_SEED_COUNT}
+      BMKG_EVENT_INTERVAL_SECONDS: ${BMKG_EVENT_INTERVAL_SECONDS}
+    ports:
+      - "${BMKG_HOST_PORT}:${BMKG_PORT}"
+    networks: [app-net]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${BMKG_PORT}/health >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
   pvmbg-mock:
-    build: ./services/pvmbg-mock
-    ports: ["8082:8082"]
-    networks: [backend]
-  # TODO:add yang belum
+    build:
+      context: ..
+      dockerfile: services/pvmbg-mock/Dockerfile
+    container_name: bnpb-pvmbg-mock
+    environment:
+      <<: *common-env
+      PVMBG_PORT: ${PVMBG_PORT}
+      PVMBG_TOKEN: ${PVMBG_TOKEN}
+      PVMBG_ADMIN_TOKEN: ${PVMBG_ADMIN_TOKEN}
+      PVMBG_DELAY_MIN_MS: ${PVMBG_DELAY_MIN_MS}
+      PVMBG_DELAY_MAX_MS: ${PVMBG_DELAY_MAX_MS}
+      PVMBG_SEED_COUNT: ${PVMBG_SEED_COUNT}
+      PVMBG_EVENT_INTERVAL_SECONDS: ${PVMBG_EVENT_INTERVAL_SECONDS}
+      PVMBG_OUTAGE_MODE: ${PVMBG_OUTAGE_MODE}
+      PVMBG_SCHEMA_VERSION: ${PVMBG_SCHEMA_VERSION}
+    ports:
+      - "${PVMBG_HOST_PORT}:${PVMBG_PORT}"
+    networks: [app-net]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${PVMBG_PORT}/health >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  aggregator:
+    build:
+      context: ..
+      dockerfile: services/aggregator/Dockerfile
+    container_name: bnpb-aggregator
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      bmkg-mock:
+        condition: service_healthy
+      pvmbg-mock:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      AGGREGATOR_PORT: ${AGGREGATOR_PORT}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS}
+      BMKG_BASE_URL: ${BMKG_BASE_URL}
+      BMKG_API_KEY: ${BMKG_API_KEY}
+      PVMBG_BASE_URL: ${PVMBG_BASE_URL}
+      PVMBG_TOKEN: ${PVMBG_TOKEN}
+      HTTP_CLIENT_TIMEOUT_MS: ${HTTP_CLIENT_TIMEOUT_MS}
+      AGG_MAX_CONCURRENCY: ${AGG_MAX_CONCURRENCY}
+      UNKNOWN_FIELD_POLICY: ${UNKNOWN_FIELD_POLICY}
+      MONGO_URI: ${MONGO_URI}
+      MONGO_DB: ${MONGO_DB}
+      KAFKA_BROKERS: ${KAFKA_BROKERS}
+      KAFKA_TOPIC: ${KAFKA_TOPIC}
+    ports:
+      - "${AGGREGATOR_HOST_PORT}:${AGGREGATOR_PORT}"
+    networks: [app-net, store-net]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${AGGREGATOR_PORT}/health >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  auth-service:
+    build:
+      context: ..
+      dockerfile: services/auth-service/Dockerfile
+    container_name: bnpb-auth-service
+    environment:
+      <<: *common-env
+      AUTH_PORT: ${AUTH_PORT}
+      ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS}
+      REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS}
+      JWT_ISSUER: ${JWT_ISSUER}
+      JWT_PRIVATE_KEY_PATH: ${JWT_PRIVATE_KEY_PATH}
+      JWT_PUBLIC_KEY_PATH: ${JWT_PUBLIC_KEY_PATH}
+      CLIENT_MEDIA_ID: ${CLIENT_MEDIA_ID}
+      CLIENT_MEDIA_SECRET: ${CLIENT_MEDIA_SECRET}
+      CLIENT_FIELD_ID: ${CLIENT_FIELD_ID}
+      CLIENT_FIELD_SECRET: ${CLIENT_FIELD_SECRET}
+      CLIENT_OPS_ID: ${CLIENT_OPS_ID}
+      CLIENT_OPS_SECRET: ${CLIENT_OPS_SECRET}
+    volumes:
+      - ./keys:/run/keys:ro
+    ports:
+      - "${AUTH_HOST_PORT}:${AUTH_PORT}"
+    networks: [app-net]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${AUTH_PORT}/health >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  client-api:
+    build:
+      context: ..
+      dockerfile: services/client-api/Dockerfile
+    container_name: bnpb-client-api
+    depends_on:
+      aggregator:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+    environment:
+      <<: *common-env
+      CLIENT_API_PORT: ${CLIENT_API_PORT}
+      AGGREGATOR_BASE_URL: ${AGGREGATOR_BASE_URL}
+      AUTH_BASE_URL: ${AUTH_BASE_URL}
+      AUTH_JWKS_URL: ${AUTH_JWKS_URL}
+      HTTP_CLIENT_TIMEOUT_MS: ${HTTP_CLIENT_TIMEOUT_MS}
+      STALE_THRESHOLD_SECONDS: ${STALE_THRESHOLD_SECONDS}
+      MAX_CONCURRENT_REQUESTS: ${MAX_CONCURRENT_REQUESTS}
+    ports:
+      - "${CLIENT_API_HOST_PORT}:${CLIENT_API_PORT}"
+    networks: [app-net]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${CLIENT_API_PORT}/health >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  consumer-dashboard:
+    build:
+      context: ..
+      dockerfile: services/consumer-dashboard/Dockerfile
+    container_name: bnpb-consumer-dashboard
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *common-env
+      CONSUMER_DASHBOARD_PORT: ${CONSUMER_DASHBOARD_PORT}
+      KAFKA_BROKERS: ${KAFKA_BROKERS}
+      KAFKA_TOPIC: ${KAFKA_TOPIC}
+      KAFKA_GROUP_ID: ${KAFKA_GROUP_DASHBOARD}
+    ports:
+      - "${CONSUMER_DASHBOARD_HOST_PORT}:${CONSUMER_DASHBOARD_PORT}"
+    networks: [app-net]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${CONSUMER_DASHBOARD_PORT}/health >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  consumer-notifier:
+    build:
+      context: ..
+      dockerfile: services/consumer-notifier/Dockerfile
+    container_name: bnpb-consumer-notifier
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *common-env
+      CONSUMER_NOTIFIER_PORT: ${CONSUMER_NOTIFIER_PORT}
+      KAFKA_BROKERS: ${KAFKA_BROKERS}
+      KAFKA_TOPIC: ${KAFKA_TOPIC}
+      KAFKA_GROUP_ID: ${KAFKA_GROUP_NOTIFIER}
+    ports:
+      - "${CONSUMER_NOTIFIER_HOST_PORT}:${CONSUMER_NOTIFIER_PORT}"
+    networks: [app-net]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${CONSUMER_NOTIFIER_PORT}/health >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  consumer-regional:
+    build:
+      context: ..
+      dockerfile: services/consumer-regional/Dockerfile
+    container_name: bnpb-consumer-regional
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *common-env
+      CONSUMER_REGIONAL_PORT: ${CONSUMER_REGIONAL_PORT}
+      KAFKA_BROKERS: ${KAFKA_BROKERS}
+      KAFKA_TOPIC: ${KAFKA_TOPIC}
+      KAFKA_GROUP_ID: ${KAFKA_GROUP_REGIONAL}
+    ports:
+      - "${CONSUMER_REGIONAL_HOST_PORT}:${CONSUMER_REGIONAL_PORT}"
+    networks: [app-net]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${CONSUMER_REGIONAL_PORT}/health >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
 networks:
-  backend:
-    internal: false
+  app-net:
+    driver: bridge
+  store-net:
+    driver: bridge
+    internal: true
+
+volumes:
+  kafka-data:
+  mongo-data:
