@@ -7,6 +7,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // volcano_reference jarang berubah, jadi di-cache in-memory setelah load
@@ -24,7 +25,7 @@ type volcanoRef struct {
 }
 
 func NewMongoVolcanoResolver(ctx context.Context, uri, dbName string) (*MongoVolcanoResolver, error) {
-	client, err := mongo.Connect(ctx, options().ApplyURI(uri))
+	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
 	if err != nil {
 		return nil, err
 	}
