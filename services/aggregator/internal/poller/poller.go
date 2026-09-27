@@ -155,7 +155,7 @@ func (p *Poller) pollBMKGOnce(ctx context.Context) {
 
 	p.bmkgStatus.markOK()
 	p.mu.Lock()
-	p.bmkgCursor = time.Now().UTC()
+	p.bmkgCursor = time.Now().UTC().Add(-2 * time.Second)
 	p.mu.Unlock()
 }
 
@@ -186,6 +186,6 @@ func (p *Poller) pollPVMBGOnce(ctx context.Context) {
 
 	p.pvmbgStatus.markOK()
 	p.mu.Lock()
-	p.pvmbgCursor = time.Now().UTC()
+	p.pvmbgCursor = time.Now().UTC().Add(-2 * time.Second)
 	p.mu.Unlock()
 }
