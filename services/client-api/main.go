@@ -27,9 +27,15 @@ func main() {
 		port = "8080"
 	}
 
-	publicKey, err := loadPublicKey(os.Getenv("AUTH_PUBLIC_KEY_PATH"))
+	publicKey, err := loadPublicKey(os.Getenv("JWT_PUBLIC_KEY_PATH"))
 	if err != nil {
 		log.Error("failed to load auth public key", "error", err)
+		os.Exit(1)
+	}
+	issuer := os.Getenv("JWT_ISSUER")
+	audience := os.Getenv("JWT_AUDIENCE")
+	if issuer == "" || audience == "" {
+		log.Error("JWT_ISSUER and JWT_AUDIENCE must be set")
 		os.Exit(1)
 	}
 
@@ -37,7 +43,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", httpx.Health(service))
-	mux.Handle("GET /hazards", api.RequireAuth(publicKey)(http.HandlerFunc(handler.ListHazardsHandler)))
+	mux.Handle("GET /hazards", api.RequireAuth(publicKey, issuer, audience)(http.HandlerFunc(handler.ListHazardsHandler)))
 
 	maxConcurrency := getEnvInt("CLIENT_API_MAX_CONCURRENCY", 150)
 	limited := api.LimitConcurrency(maxConcurrency)(mux)
