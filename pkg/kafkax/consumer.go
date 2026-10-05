@@ -2,6 +2,7 @@ package kafkax
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"strings"
@@ -23,7 +24,7 @@ func Run(ctx context.Context, log *slog.Logger, brokers []string, topic, groupID
 		MinBytes:    1,
 		MaxBytes:    1e6,
 		MaxWait:     500 * time.Millisecond,
-		StartOffset: kafka.FirstOffset, 
+		StartOffset: kafka.FirstOffset,
 	})
 	defer r.Close()
 	log.Info("consumer_started", "topic", topic, "group", groupID, "brokers", brokers)
@@ -51,7 +52,7 @@ func Run(ctx context.Context, log *slog.Logger, brokers []string, topic, groupID
 			mlog.Warn("handler_failed", "attempt", attempt, "err", herr)
 			select {
 			case <-ctx.Done():
-				return 
+				return
 			case <-time.After(time.Duration(attempt) * 200 * time.Millisecond):
 			}
 		}
@@ -73,8 +74,18 @@ func Header(m kafka.Message, key string) string {
 	return ""
 }
 
-func Brokers() []string {
-	return strings.Split(Env("KAFKA_BROKERS", "localhost:9092"), ",")
+func Brokers() ([]string, error) {
+	raw := os.Getenv("KAFKA_BROKERS")
+	var out []string
+	for _, b := range strings.Split(raw, ",") {
+		if b = strings.TrimSpace(b); b != "" {
+			out = append(out, b)
+		}
+	}
+	if len(out) == 0 {
+		return nil, errors.New("KAFKA_BROKERS kosong: set mis. kafka:9092")
+	}
+	return out, nil
 }
 
 func Env(key, def string) string {
