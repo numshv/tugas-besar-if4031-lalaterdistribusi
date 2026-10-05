@@ -16,8 +16,7 @@ type credential struct {
 	scope    string
 }
 
-// credentials dibaca dari env var saat startup, bukan hardcode.
-// Format env mengikuti CLIENT_*_ID dan CLIENT_*_SECRET di .env.example.
+
 var store map[string]credential
 
 func Load() error {

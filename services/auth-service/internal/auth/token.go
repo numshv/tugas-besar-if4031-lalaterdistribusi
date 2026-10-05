@@ -50,8 +50,6 @@ func NewIssuer(privateKey *rsa.PrivateKey, accessTTL, refreshTTL time.Duration, 
 	}, nil
 }
 
-// IssuePair bikin access_token + refresh_token sekaligus, dipanggil
-// dari /login.
 func (iss *Issuer) IssuePair(username, scope string) (access, refresh string, err error) {
 	if username == "" || !validScope(scope) {
 		return "", "", jwt.ErrTokenInvalidClaims
@@ -72,7 +70,7 @@ func (iss *Issuer) sign(username, scope, tokenType string, ttl time.Duration) (s
 	claims := jwt.MapClaims{
 		"sub":   username,
 		"scope": scope,
-		"type":  tokenType, // INI yang jawab pertanyaan 1 tadi
+		"type":  tokenType, 
 		"iss":   iss.issuer,
 		"aud":   iss.audience,
 		"iat":   now.Unix(),
@@ -84,9 +82,6 @@ func (iss *Issuer) sign(username, scope, tokenType string, ttl time.Duration) (s
 	return t.SignedString(iss.privateKey)
 }
 
-// Refresh verifikasi refresh_token lama, revoke jti-nya, terbitin
-// access_token baru. INI yang dites kriteria P3.3 (token lama ditolak
-// setelah refresh).
 func (iss *Issuer) Refresh(refreshToken string) (newAccess, newRefresh string, err error) {
 	claims, err := iss.parseAndVerify(refreshToken)
 	if err != nil {

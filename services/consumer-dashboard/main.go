@@ -116,12 +116,12 @@ func main() {
 		defer close(consumerDone)
 		kafkax.Run(ctx, log, brokers,
 			kafkax.Env("KAFKA_TOPIC", "bnpb.hazard-events.v1"),
-			kafkax.Env("KAFKA_GROUP_ID", "bnpb.dashboard"), handler)
+			kafkax.Env("KAFKA_GROUP_ID", "dashboard-updater"), handler)
 	}()
 
 	port := os.Getenv("CONSUMER_DASHBOARD_PORT")
 	if port == "" {
-		port = "8085"
+		port = "8091"
 	}
 
 	mux := http.NewServeMux()

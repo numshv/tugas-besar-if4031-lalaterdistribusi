@@ -93,12 +93,12 @@ func main() {
 		defer close(consumerDone)
 		kafkax.Run(ctx, log, brokers,
 			kafkax.Env("KAFKA_TOPIC", "bnpb.hazard-events.v1"),
-			kafkax.Env("KAFKA_GROUP_ID", "bnpb.notifier"), handler)
+			kafkax.Env("KAFKA_GROUP_ID", "notifier"), handler)
 	}()
 
 	port := os.Getenv("CONSUMER_NOTIFIER_PORT")
 	if port == "" {
-		port = "8086"
+		port = "8092"
 	}
 
 	mux := http.NewServeMux()
