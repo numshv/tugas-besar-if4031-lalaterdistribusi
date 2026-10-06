@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/hazard"
@@ -25,7 +27,6 @@ func NewHandler(aggregatorBaseURL string, log *slog.Logger) *Handler {
 	}
 }
 
-// perlu cek lagi kesesuaiannya
 type aggregatorStatus struct {
 	PVMBG struct {
 		Healthy     bool      `json:"healthy"`
@@ -40,10 +41,21 @@ func (h *Handler) ListHazardsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	query := r.URL.Query()
+	hazardType := query.Get("type")
+	if len(query["type"]) != 1 || (hazardType != string(hazard.TypeSeismic) && hazardType != string(hazard.TypeVolcanic)) {
+		httpx.Error(w, http.StatusBadRequest, "invalid_type", "type must be SEISMIC or VOLCANIC")
+		return
+	}
+	if scope == "media" && requestsRawFields(query["fields"]) {
+		httpx.Error(w, http.StatusForbidden, "forbidden_fields", "media scope cannot request raw fields")
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 
-	events, err := h.fetchHazards(ctx, r.URL.Query().Get("since"))
+	events, err := h.fetchHazards(ctx, hazardType, query.Get("since"))
 	if err != nil {
 		h.log.ErrorContext(r.Context(), "fetch hazards failed", "error", err)
 		httpx.Error(w, http.StatusBadGateway, "aggregator_unreachable", "failed to reach aggregator")
@@ -64,12 +76,14 @@ func (h *Handler) ListHazardsHandler(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, filtered)
 }
 
-func (h *Handler) fetchHazards(ctx context.Context, since string) ([]hazard.Event, error) {
-	url := h.aggregatorBaseURL + "/internal/hazards"
+func (h *Handler) fetchHazards(ctx context.Context, hazardType, since string) ([]hazard.Event, error) {
+	query := make(url.Values)
+	query.Set("type", hazardType)
 	if since != "" {
-		url += "?since=" + since
+		query.Set("since", since)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	endpoint := h.aggregatorBaseURL + "/internal/hazards?" + query.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -84,6 +98,23 @@ func (h *Handler) fetchHazards(ctx context.Context, since string) ([]hazard.Even
 		return nil, err
 	}
 	return events, nil
+}
+
+func requestsRawFields(requested []string) bool {
+	rawFields := map[string]struct{}{
+		"source_ref_id": {},
+		"latitude":      {},
+		"longitude":     {},
+		"attributes":    {},
+	}
+	for _, value := range requested {
+		for _, field := range strings.Split(value, ",") {
+			if _, ok := rawFields[strings.TrimSpace(field)]; ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (h *Handler) fetchStatus(ctx context.Context) (*aggregatorStatus, error) {
