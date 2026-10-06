@@ -185,8 +185,10 @@ services:
       ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS}
       REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS}
       JWT_ISSUER: ${JWT_ISSUER}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-client-api}
       JWT_PRIVATE_KEY_PATH: ${JWT_PRIVATE_KEY_PATH}
       JWT_PUBLIC_KEY_PATH: ${JWT_PUBLIC_KEY_PATH}
+      AUTH_STATE_PATH: /data/revoked-refresh-tokens.json
       CLIENT_MEDIA_ID: ${CLIENT_MEDIA_ID}
       CLIENT_MEDIA_SECRET: ${CLIENT_MEDIA_SECRET}
       CLIENT_FIELD_ID: ${CLIENT_FIELD_ID}
@@ -195,6 +197,7 @@ services:
       CLIENT_OPS_SECRET: ${CLIENT_OPS_SECRET}
     volumes:
       - ./keys:/run/keys:ro
+      - auth-state:/data
     ports:
       - "${AUTH_HOST_PORT}:${AUTH_PORT}"
     networks: [app-net]
@@ -221,11 +224,17 @@ services:
       AGGREGATOR_BASE_URL: ${AGGREGATOR_BASE_URL}
       AUTH_BASE_URL: ${AUTH_BASE_URL}
       AUTH_JWKS_URL: ${AUTH_JWKS_URL}
+      JWT_ISSUER: ${JWT_ISSUER}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-client-api}
+      JWT_PUBLIC_KEY_PATH: ${JWT_PUBLIC_KEY_PATH}
+      CLIENT_API_MAX_CONCURRENCY: ${MAX_CONCURRENT_REQUESTS}
       HTTP_CLIENT_TIMEOUT_MS: ${HTTP_CLIENT_TIMEOUT_MS}
       STALE_THRESHOLD_SECONDS: ${STALE_THRESHOLD_SECONDS}
       MAX_CONCURRENT_REQUESTS: ${MAX_CONCURRENT_REQUESTS}
     ports:
       - "${CLIENT_API_HOST_PORT}:${CLIENT_API_PORT}"
+    volumes:
+      - ./keys:/run/keys:ro
     networks: [app-net]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${CLIENT_API_PORT}/health >/dev/null 2>&1 || exit 1"]
@@ -269,6 +278,7 @@ services:
     environment:
       <<: *common-env
       CONSUMER_NOTIFIER_PORT: ${CONSUMER_NOTIFIER_PORT}
+      NOTIFIER_SEND_DELAY_MS: ${NOTIFIER_SEND_DELAY_MS:-0}
       KAFKA_BROKERS: ${KAFKA_BROKERS}
       KAFKA_TOPIC: ${KAFKA_TOPIC}
       KAFKA_GROUP_ID: ${KAFKA_GROUP_NOTIFIER}
@@ -316,3 +326,4 @@ networks:
 volumes:
   kafka-data:
   mongo-data:
+  auth-state:

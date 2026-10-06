@@ -7,7 +7,7 @@ COPY services/auth-service ./services/auth-service
 RUN CGO_ENABLED=0 go build -trimpath -o /out/app ./services/auth-service
 
 FROM alpine:3.21
-RUN adduser -D -u 10001 app
+RUN adduser -D -u 10001 app && mkdir -p /data && chown app:app /data
 COPY --from=build /out/app /usr/local/bin/app
 USER app
 EXPOSE 8084
