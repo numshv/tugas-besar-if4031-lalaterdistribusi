@@ -1,0 +1,7 @@
+.git
+.env
+infra
+docs
+loadtest
+scripts
+*.md

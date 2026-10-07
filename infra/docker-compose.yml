@@ -160,12 +160,10 @@ services:
       HTTP_CLIENT_TIMEOUT_MS: ${HTTP_CLIENT_TIMEOUT_MS}
       AGG_MAX_CONCURRENCY: ${AGG_MAX_CONCURRENCY}
       UNKNOWN_FIELD_POLICY: ${UNKNOWN_FIELD_POLICY}
-      MONGO_URI: ${MONGO_URI}
+      MONGO_URI: mongodb://${MONGO_APP_USERNAME}:${MONGO_APP_PASSWORD}@mongodb:27017/${MONGO_DB}?authSource=${MONGO_DB}
       MONGO_DB: ${MONGO_DB}
       KAFKA_BROKERS: ${KAFKA_BROKERS}
       KAFKA_TOPIC: ${KAFKA_TOPIC}
-    ports:
-      - "${AGGREGATOR_HOST_PORT}:${AGGREGATOR_PORT}"
     networks: [app-net, store-net]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${AGGREGATOR_PORT}/health >/dev/null 2>&1 || exit 1"]
@@ -234,7 +232,7 @@ services:
     ports:
       - "${CLIENT_API_HOST_PORT}:${CLIENT_API_PORT}"
     volumes:
-      - ./keys:/run/keys:ro
+      - ./keys/jwt_public.pem:/run/keys/jwt_public.pem:ro
     networks: [app-net]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${CLIENT_API_PORT}/health >/dev/null 2>&1 || exit 1"]
