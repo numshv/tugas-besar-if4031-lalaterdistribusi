@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/hazard"
@@ -54,16 +55,33 @@ func (h *Handler) ListHazardsHandler(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 
-	events, err := h.fetchHazards(ctx, hazardType, query.Get("since"))
-	if err != nil {
-		h.log.ErrorContext(r.Context(), "fetch hazards failed", "error", err)
+	var (
+		events    []hazard.Event
+		eventsErr error
+		status    *aggregatorStatus
+		statusErr error
+	)
+
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		events, eventsErr = h.fetchHazards(ctx, hazardType, query.Get("since"))
+	})
+
+	if hazardType == string(hazard.TypeVolcanic) {
+		wg.Go(func() {
+			status, statusErr = h.fetchStatus(ctx)
+		})
+	}
+	wg.Wait()
+
+	if eventsErr != nil {
+		h.log.ErrorContext(r.Context(), "fetch hazards failed", "error", eventsErr)
 		httpx.Error(w, http.StatusBadGateway, "aggregator_unreachable", "failed to reach aggregator")
 		return
 	}
 
-	status, err := h.fetchStatus(ctx)
 	staleSince := ""
-	if err == nil && !status.PVMBG.Healthy {
+	if statusErr == nil && status != nil && !status.PVMBG.Healthy {
 		staleSince = status.PVMBG.LastSuccess.UTC().Format(time.RFC3339)
 	}
 
