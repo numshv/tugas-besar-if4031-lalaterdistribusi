@@ -1,4 +1,3 @@
-// seismic.go
 package mapper
 
 import (
@@ -8,15 +7,11 @@ import (
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/hazard"
 )
 
-// Hanya field yang benar-benar dikonsumsi ke slot kanonik yang dikecualikan
-// dari attributes. magnitude, depth_km, potential_tsunami SENGAJA tidak
-// masuk daftar ini karena spec eksplisit minta mereka tetap muncul di
-// attributes juga.
 var seismicCanonicalOnlyFields = map[string]struct{}{
 	"event_id": {}, "region_name": {}, "epicenter_lat": {}, "epicenter_lon": {}, "occurred_at": {},
 }
 
-func MapSeismic(events, warnings []map[string]any, policy UnknownFieldPolicy) ([]hazard.Event, error) {
+func MapSeismic(events, warnings []map[string]any, policy UnknownFieldPolicy) ([]hazard.Event, []error) {
 	warningByEvent := make(map[string]map[string]any, len(warnings))
 	for _, w := range warnings {
 		if refID, _ := w["related_event_id"].(string); refID != "" {
@@ -25,14 +20,16 @@ func MapSeismic(events, warnings []map[string]any, policy UnknownFieldPolicy) ([
 	}
 
 	out := make([]hazard.Event, 0, len(events))
+	var errs []error
 	for _, raw := range events {
 		e, err := mapOneSeismic(raw, warningByEvent, policy)
 		if err != nil {
-			return nil, fmt.Errorf("map seismic event: %w", err)
+			errs = append(errs, fmt.Errorf("map seismic event: %w", err))
+			continue
 		}
 		out = append(out, e)
 	}
-	return out, nil
+	return out, errs
 }
 
 func mapOneSeismic(raw map[string]any, warningByEvent map[string]map[string]any, policy UnknownFieldPolicy) (hazard.Event, error) {
@@ -58,10 +55,12 @@ func mapOneSeismic(raw map[string]any, warningByEvent map[string]map[string]any,
 	threatLevel := ""
 	if hasWarning {
 		threatLevel, _ = warning["threat_level"].(string)
-		// TsunamiWarning bukan entitas kanonik sendiri; seluruh fieldnya
-		// diteruskan ke attributes dengan prefiks supaya tidak bentrok
-		// dengan nama field milik SeismicEvent.
-		for k, v := range warning {
+		// FIX #1: field TsunamiWarning sekarang lewat attributesOf juga,
+		// supaya tunduk ke UnknownFieldPolicy yang sama persis dengan field
+		// SeismicEvent. Sebelumnya field ini SELALU ditambahkan apa pun
+		// policy-nya, bikin perilaku tidak konsisten dengan kebijakan yang
+		// dideklarasikan (P1.4).
+		for k, v := range attributesOf(warning, map[string]struct{}{}, policy) {
 			attrs["warning_"+k] = v
 		}
 	}
@@ -81,10 +80,6 @@ func mapOneSeismic(raw map[string]any, warningByEvent map[string]map[string]any,
 	}, nil
 }
 
-// resolveSeismicSeverity mengikuti aturan pemetaan di spesifikasi persis:
-// AWAS kalau ada warning dengan threat_level Awas; kalau ada warning lain,
-// ikuti threat_level-nya; kalau tidak ada warning sama sekali, pakai
-// threshold magnitude.
 func resolveSeismicSeverity(magnitude float64, threatLevel string, hasWarning bool) hazard.Severity {
 	if hasWarning {
 		if threatLevel == "Awas" {
