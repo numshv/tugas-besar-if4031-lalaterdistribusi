@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -68,44 +69,50 @@ func run(log *slog.Logger) error {
 		Header:  http.Header{"Authorization": {"Bearer " + cfg.PVMBGToken}},
 	}
 
+	retryQ := newPublishRetryQueue(500)
+
 	p := poller.New(log, cfg.PollInterval, httpTimeout, bmkgClient, pvmbgClient,
 		func(ctx context.Context, events, warnings []map[string]any) error {
-			hazards, err := mapper.MapSeismic(events, warnings, policy)
-			if err != nil {
-				return err
-			}
-			return persistAndPublish(ctx, mongoStore, kafkaPub, hazards, log)
+			hazards, mapErrs := mapper.MapSeismic(events, warnings, policy)
+			return persistAndPublish(ctx, mongoStore, kafkaPub, retryQ, hazards, mapErrs, log)
 		},
 		func(ctx context.Context, reports []map[string]any) error {
-			hazards, err := mapper.MapVolcanic(reports, volcanoResolver, policy)
-			if err != nil {
-				return err
-			}
-			return persistAndPublish(ctx, mongoStore, kafkaPub, hazards, log)
+			hazards, mapErrs := mapper.MapVolcanic(reports, volcanoResolver, policy)
+			return persistAndPublish(ctx, mongoStore, kafkaPub, retryQ, hazards, mapErrs, log)
 		},
 	)
 
 	go p.Run(ctx)
 
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				retryQ.flush(ctx, kafkaPub, log)
+			}
+		}
+	}()
+
 	handler := api.New(mongoStore, p, log, cfg.MaxConcurrency)
 	return httpx.ListenAndServe(ctx, ":"+cfg.Port, httpx.Middleware(log)(handler), log)
 }
 
-// persistAndPublish SENGAJA simpan dulu baru publish. Kalau publish gagal
-// setelah simpan berhasil, data tetap aman di Canonical Store dan akan
-// terpublish lagi di siklus poll berikutnya (aman karena upsert idempoten).
-// Urutan sebaliknya (publish dulu) berisiko consumer melihat event yang
-// ternyata gagal tersimpan.
-func persistAndPublish(ctx context.Context, s store.Store, pub publisher.Publisher, events []hazard.Event, log *slog.Logger) error {
+func persistAndPublish(ctx context.Context, s store.Store, pub publisher.Publisher, retryQ *publishRetryQueue, events []hazard.Event, mapErrs []error, log *slog.Logger) error {
+	for _, me := range mapErrs {
+		log.WarnContext(ctx, "skipping malformed record", "error", me)
+	}
+
 	for _, e := range events {
 		if err := s.Upsert(ctx, e); err != nil {
 			return fmt.Errorf("upsert %s: %w", e.HazardID, err)
 		}
 		if err := pub.Publish(ctx, e); err != nil {
-			// satu event gagal publish tidak menghentikan batch; akan
-			// tersusul di siklus poll berikutnya karena upsert idempoten
-			log.ErrorContext(ctx, "publish failed, will retry next poll cycle",
-				"hazard_id", e.HazardID, "error", err)
+			log.ErrorContext(ctx, "publish failed, queued for retry", "hazard_id", e.HazardID, "error", err)
+			retryQ.enqueue(e, log)
 			continue
 		}
 	}
@@ -176,4 +183,52 @@ func envSeconds(key string, fallback int) time.Duration {
 }
 func envMillis(key string, fallback int) time.Duration {
 	return time.Duration(envInt(key, fallback)) * time.Millisecond
+}
+
+type publishRetryQueue struct {
+	mu    sync.Mutex
+	items []hazard.Event
+	max   int
+}
+
+func newPublishRetryQueue(max int) *publishRetryQueue {
+	return &publishRetryQueue{max: max}
+}
+
+func (q *publishRetryQueue) enqueue(e hazard.Event, log *slog.Logger) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.items) >= q.max {
+		log.Warn("publish retry queue full, dropping oldest pending event",
+			"dropped_hazard_id", q.items[0].HazardID)
+		q.items = q.items[1:]
+	}
+	q.items = append(q.items, e)
+}
+
+func (q *publishRetryQueue) flush(ctx context.Context, pub publisher.Publisher, log *slog.Logger) {
+	q.mu.Lock()
+	pending := q.items
+	q.items = nil
+	q.mu.Unlock()
+
+	if len(pending) == 0 {
+		return
+	}
+
+	var stillFailing []hazard.Event
+	for _, e := range pending {
+		if err := pub.Publish(ctx, e); err != nil {
+			log.WarnContext(ctx, "retry publish failed again", "hazard_id", e.HazardID, "error", err)
+			stillFailing = append(stillFailing, e)
+			continue
+		}
+		log.InfoContext(ctx, "retry publish succeeded", "hazard_id", e.HazardID)
+	}
+
+	if len(stillFailing) > 0 {
+		q.mu.Lock()
+		q.items = append(stillFailing, q.items...)
+		q.mu.Unlock()
+	}
 }

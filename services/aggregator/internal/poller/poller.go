@@ -9,6 +9,7 @@ import (
 
 	"log/slog"
 
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/correlation"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/httpx"
 )
 
@@ -34,9 +35,6 @@ func (s *sourceStatus) markErr(err error) {
 	s.v.Store(Status{Healthy: false, LastSuccess: prev.LastSuccess, LastError: err.Error()})
 }
 
-// sourceClient membungkus base URL + header auth per instansi. Kredensial
-// BMKG dan PVMBG memang harus beda header/format (lihat Problem 3), jadi
-// tidak digabung jadi satu client generik.
 type SourceClient struct {
 	HTTP    *httpx.Client
 	BaseURL string
@@ -50,6 +48,11 @@ func (c SourceClient) getJSON(ctx context.Context, path string, since time.Time,
 	}
 	return c.HTTP.GetJSON(ctx, url, c.Header, out)
 }
+
+// processTimeout adalah batas waktu terpisah untuk proses simpan+publish
+// untuk mencegah kegagalan publish "palsu" akibat deadline HTTP fetch yang sudah hampir habis.
+
+const processTimeout = 10 * time.Second
 
 type Poller struct {
 	log      *slog.Logger
@@ -86,9 +89,6 @@ func New(
 func (p *Poller) BMKGStatus() Status  { return p.bmkgStatus.get() }
 func (p *Poller) PVMBGStatus() Status { return p.pvmbgStatus.get() }
 
-// Run dipanggil lewat `go p.Run(ctx)` dari main, bukan blocking start-up.
-// Dua goroutine di dalamnya berjalan sampai ctx dibatalkan (graceful
-// shutdown lewat signal.NotifyContext di main.go).
 func (p *Poller) Run(ctx context.Context) {
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -111,8 +111,11 @@ func (p *Poller) loop(ctx context.Context, poll func(context.Context)) {
 }
 
 func (p *Poller) pollBMKGOnce(ctx context.Context) {
-	callCtx, cancel := context.WithTimeout(ctx, p.timeout)
-	defer cancel()
+	// correlationID dibuat sekali per siklus poll, dipakai di SEMUA log
+	// supaya satu siklus poll bisa ditelusuri sebagai satu alur utuh.
+	correlationID := correlation.New()
+	fetchCtx, cancelFetch := context.WithTimeout(correlation.WithID(ctx, correlationID), p.timeout)
+	defer cancelFetch()
 
 	p.mu.Lock()
 	since := p.bmkgCursor
@@ -121,35 +124,38 @@ func (p *Poller) pollBMKGOnce(ctx context.Context) {
 	var events, warnings []map[string]any
 	var eventsErr, warningsErr error
 
-	// dua endpoint BMKG diambil paralel murni untuk kecepatan (dua-duanya
-	// sama-sama cepat), bukan untuk mencegah blocking — pencegahan blocking
-	// yang sesungguhnya ada di pemisahan goroutine BMKG vs PVMBG di atas.
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		eventsErr = p.bmkg.getJSON(callCtx, "/seismic-events", since, &events)
+		eventsErr = p.bmkg.getJSON(fetchCtx, "/seismic-events", since, &events)
 	}()
 	go func() {
 		defer wg.Done()
-		warningsErr = p.bmkg.getJSON(callCtx, "/tsunami-warnings", since, &warnings)
+		warningsErr = p.bmkg.getJSON(fetchCtx, "/tsunami-warnings", since, &warnings)
 	}()
 	wg.Wait()
 
 	if eventsErr != nil {
 		p.bmkgStatus.markErr(eventsErr)
-		p.log.WarnContext(ctx, "bmkg seismic poll failed", "error", eventsErr)
+		p.log.WarnContext(fetchCtx, "bmkg seismic poll failed", "error", eventsErr)
 		return
 	}
 	if warningsErr != nil {
 		p.bmkgStatus.markErr(warningsErr)
-		p.log.WarnContext(ctx, "bmkg tsunami poll failed", "error", warningsErr)
+		p.log.WarnContext(fetchCtx, "bmkg tsunami poll failed", "error", warningsErr)
 		return
 	}
 
-	if err := p.onSeismic(ctx, events, warnings); err != nil {
+	// context buat proses simpan+publish dipisah dari fetchCtx, pakai
+	// deadline sendiri yang tidak terpotong oleh sisa waktu HTTP fetch tadi.
+	// correlationID tetap sama supaya satu siklus poll tetap terlacak utuh.
+	processCtx, cancelProcess := context.WithTimeout(correlation.WithID(context.Background(), correlationID), processTimeout)
+	defer cancelProcess()
+
+	if err := p.onSeismic(processCtx, events, warnings); err != nil {
 		p.bmkgStatus.markErr(err)
-		p.log.ErrorContext(ctx, "process seismic batch failed", "error", err)
+		p.log.ErrorContext(processCtx, "process seismic batch failed", "error", err)
 		return
 	}
 
@@ -160,27 +166,28 @@ func (p *Poller) pollBMKGOnce(ctx context.Context) {
 }
 
 func (p *Poller) pollPVMBGOnce(ctx context.Context) {
-	// context timeout ini adalah pertahanan utama P2.3: kalau PVMBG di mode
-	// outage "timeout" (menggantung tanpa respons), goroutine ini tetap
-	// dipaksa berhenti menunggu setelah p.timeout, TIDAK PERNAH menahan
-	// goroutine BMKG di atas karena keduanya berjalan independen.
-	callCtx, cancel := context.WithTimeout(ctx, p.timeout)
-	defer cancel()
+	correlationID := correlation.New()
+	fetchCtx, cancelFetch := context.WithTimeout(correlation.WithID(ctx, correlationID), p.timeout)
+	defer cancelFetch()
 
 	p.mu.Lock()
 	since := p.pvmbgCursor
 	p.mu.Unlock()
 
 	var reports []map[string]any
-	if err := p.pvmbg.getJSON(callCtx, "/volcanic-reports", since, &reports); err != nil {
+	if err := p.pvmbg.getJSON(fetchCtx, "/volcanic-reports", since, &reports); err != nil {
 		p.pvmbgStatus.markErr(err)
-		p.log.WarnContext(ctx, "pvmbg poll failed", "error", err)
+		p.log.WarnContext(fetchCtx, "pvmbg poll failed", "error", err)
 		return
 	}
 
-	if err := p.onVolcanic(ctx, reports); err != nil {
+	// sama seperti BMKG, context proses terpisah dari context fetch.
+	processCtx, cancelProcess := context.WithTimeout(correlation.WithID(context.Background(), correlationID), processTimeout)
+	defer cancelProcess()
+
+	if err := p.onVolcanic(processCtx, reports); err != nil {
 		p.pvmbgStatus.markErr(err)
-		p.log.ErrorContext(ctx, "process volcanic batch failed", "error", err)
+		p.log.ErrorContext(processCtx, "process volcanic batch failed", "error", err)
 		return
 	}
 
