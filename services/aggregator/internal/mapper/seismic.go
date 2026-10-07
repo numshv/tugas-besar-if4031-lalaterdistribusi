@@ -55,11 +55,6 @@ func mapOneSeismic(raw map[string]any, warningByEvent map[string]map[string]any,
 	threatLevel := ""
 	if hasWarning {
 		threatLevel, _ = warning["threat_level"].(string)
-		// FIX #1: field TsunamiWarning sekarang lewat attributesOf juga,
-		// supaya tunduk ke UnknownFieldPolicy yang sama persis dengan field
-		// SeismicEvent. Sebelumnya field ini SELALU ditambahkan apa pun
-		// policy-nya, bikin perilaku tidak konsisten dengan kebijakan yang
-		// dideklarasikan (P1.4).
 		for k, v := range attributesOf(warning, map[string]struct{}{}, policy) {
 			attrs["warning_"+k] = v
 		}

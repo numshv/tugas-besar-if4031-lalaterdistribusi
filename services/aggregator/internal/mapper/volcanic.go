@@ -7,9 +7,6 @@ import (
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/hazard"
 )
 
-// VolcanoResolver membaca koleksi volcano_reference di Mongo (sudah di-seed
-// oleh mongo-init.js). Diekspos sebagai interface, bukan dependency langsung
-// ke Mongo, supaya mapper bisa diuji dengan fake resolver tanpa database.
 type VolcanoResolver interface {
 	Resolve(volcanoID string) (name string, lat, lon float64, found bool)
 }
@@ -18,16 +15,19 @@ var volcanicCanonicalOnlyFields = map[string]struct{}{
 	"report_id": {}, "volcano_id": {}, "alert_level": {}, "reported_at": {},
 }
 
-func MapVolcanic(reports []map[string]any, resolver VolcanoResolver, policy UnknownFieldPolicy) ([]hazard.Event, error) {
+// MapVolcanic jadinya gk stop seluruh batch kalau satu record bermasalah,
+func MapVolcanic(reports []map[string]any, resolver VolcanoResolver, policy UnknownFieldPolicy) ([]hazard.Event, []error) {
 	out := make([]hazard.Event, 0, len(reports))
+	var errs []error
 	for _, raw := range reports {
 		e, err := mapOneVolcanic(raw, resolver, policy)
 		if err != nil {
-			return nil, fmt.Errorf("map volcanic report: %w", err)
+			errs = append(errs, fmt.Errorf("map volcanic report: %w", err))
+			continue
 		}
 		out = append(out, e)
 	}
-	return out, nil
+	return out, errs
 }
 
 func mapOneVolcanic(raw map[string]any, resolver VolcanoResolver, policy UnknownFieldPolicy) (hazard.Event, error) {
@@ -50,10 +50,6 @@ func mapOneVolcanic(raw map[string]any, resolver VolcanoResolver, policy Unknown
 
 	name, lat, lon, found := resolver.Resolve(volcanoID)
 	if !found {
-		// volcano_id tak dikenal itu masalah DATA, bukan masalah SKEMA (P1).
-		// Event tetap dibentuk (jangan di-drop diam-diam), tapi area_name
-		// jatuh ke ID mentahnya sendiri supaya kelihatan di dashboard bahwa
-		// ada volcano_id baru yang belum terdaftar di tabel referensi.
 		name = volcanoID
 	}
 
