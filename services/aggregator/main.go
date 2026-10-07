@@ -47,6 +47,13 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("connect mongo: %w", err)
 	}
+	defer func() {
+		disconnectCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := mongoClient.Disconnect(disconnectCtx); err != nil {
+			log.Warn("mongo disconnect failed", "error", err)
+		}
+	}()
 
 	mongoStore := store.NewMongoStore(mongoClient, cfg.MongoDB)
 	volcanoResolver, err := store.NewMongoVolcanoResolver(ctx, mongoClient, cfg.MongoDB)
