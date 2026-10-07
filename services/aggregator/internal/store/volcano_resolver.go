@@ -7,7 +7,6 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // volcano_reference jarang berubah, jadi di-cache in-memory setelah load
@@ -24,11 +23,7 @@ type volcanoRef struct {
 	Lon  float64 `bson:"longitude"`
 }
 
-func NewMongoVolcanoResolver(ctx context.Context, uri, dbName string) (*MongoVolcanoResolver, error) {
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
-	if err != nil {
-		return nil, err
-	}
+func NewMongoVolcanoResolver(ctx context.Context, client *mongo.Client, dbName string) (*MongoVolcanoResolver, error) {
 	r := &MongoVolcanoResolver{col: client.Database(dbName).Collection("volcano_reference"), data: map[string]volcanoRef{}}
 	if err := r.reload(ctx); err != nil {
 		return nil, err

@@ -43,11 +43,13 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	mongoStore, err := store.NewMongoStore(ctx, cfg.MongoURI, cfg.MongoDB)
+	mongoClient, err := store.NewMongoClient(ctx, cfg.MongoURI)
 	if err != nil {
-		return fmt.Errorf("init store: %w", err)
+		return fmt.Errorf("connect mongo: %w", err)
 	}
-	volcanoResolver, err := store.NewMongoVolcanoResolver(ctx, cfg.MongoURI, cfg.MongoDB)
+
+	mongoStore := store.NewMongoStore(mongoClient, cfg.MongoDB)
+	volcanoResolver, err := store.NewMongoVolcanoResolver(ctx, mongoClient, cfg.MongoDB)
 	if err != nil {
 		return fmt.Errorf("init volcano resolver: %w", err)
 	}

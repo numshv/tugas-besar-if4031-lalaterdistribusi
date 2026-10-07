@@ -16,13 +16,11 @@ type MongoStore struct {
 	col *mongo.Collection
 }
 
-func NewMongoStore(ctx context.Context, uri, dbName string) (*MongoStore, error) {
+func NewMongoClient(ctx context.Context, uri string) (*mongo.Client, error) {
 	clientOpts := options.Client().
 		ApplyURI(uri).
 		SetConnectTimeout(10 * time.Second).
 		SetServerSelectionTimeout(10 * time.Second).
-		// jauh di atas 50 koneksi paralel yang diminta load test P2, cukup
-		// besar supaya connection pool tidak jadi bottleneck tersembunyi
 		SetMaxPoolSize(50).
 		SetRetryWrites(true)
 
@@ -36,8 +34,11 @@ func NewMongoStore(ctx context.Context, uri, dbName string) (*MongoStore, error)
 	if err := client.Ping(pingCtx, nil); err != nil {
 		return nil, fmt.Errorf("ping mongo: %w", err)
 	}
+	return client, nil
+}
 
-	return &MongoStore{col: client.Database(dbName).Collection("hazard_events")}, nil
+func NewMongoStore(client *mongo.Client, dbName string) *MongoStore {
+	return &MongoStore{col: client.Database(dbName).Collection("hazard_events")}
 }
 
 // document adalah representasi BSON. hazard_id dipakai sebagai _id supaya
