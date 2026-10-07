@@ -83,6 +83,7 @@ func run(log *slog.Logger) error {
 	go store.Run(ctx, interval, log)
 
 	log.Info("mock ready",
+		"run_id", store.RunID(),
 		"port", port,
 		"seed_count", seedCount,
 		"report_interval", interval.String(),

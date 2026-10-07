@@ -46,6 +46,7 @@ type warningRecord struct {
 }
 
 type Store struct {
+	run        string
 	mu         sync.RWMutex
 	events     []Event
 	warnings   []warningRecord
@@ -54,7 +55,7 @@ type Store struct {
 }
 
 func NewStore(seedCount int) *Store {
-	s := &Store{}
+	s := &Store{run: fmt.Sprintf("%06x", rand.Uint32N(1<<24))}
 	now := time.Now().UTC()
 
 	for extra := seedCount - len(seedSpecs); extra > 0; extra-- {
@@ -70,11 +71,13 @@ func NewStore(seedCount int) *Store {
 	return s
 }
 
+func (s *Store) RunID() string { return s.run }
+
 func (s *Store) append(at time.Time, magnitude, depthKm float64, reg region, threat string) Event {
 	at = at.Truncate(time.Second)
 	s.eventSeq++
 	e := Event{
-		EventID:          fmt.Sprintf("EQ-%s-%04d", at.Format("2006-0102"), s.eventSeq),
+		EventID:          fmt.Sprintf("EQ-%s-%s-%04d", at.Format("2006-0102"), s.run, s.eventSeq),
 		Magnitude:        magnitude,
 		DepthKm:          depthKm,
 		EpicenterLat:     reg.lat,
@@ -89,7 +92,7 @@ func (s *Store) append(at time.Time, magnitude, depthKm float64, reg region, thr
 		s.warningSeq++
 		s.warnings = append(s.warnings, warningRecord{
 			Warning: Warning{
-				WarningID:        fmt.Sprintf("TW-%s-%04d", at.Format("2006-0102"), s.warningSeq),
+				WarningID:        fmt.Sprintf("TW-%s-%s-%04d", at.Format("2006-0102"), s.run, s.warningSeq),
 				RelatedEventID:   e.EventID,
 				ThreatLevel:      threat,
 				AffectedZones:    reg.zones,
