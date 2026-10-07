@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -15,14 +14,14 @@ import (
 
 type Handler struct {
 	aggregatorBaseURL string
-	httpClient        *http.Client
+	httpClient        *httpx.Client
 	log               *slog.Logger
 }
 
 func NewHandler(aggregatorBaseURL string, log *slog.Logger) *Handler {
 	return &Handler{
 		aggregatorBaseURL: aggregatorBaseURL,
-		httpClient:        &http.Client{Timeout: 3 * time.Second},
+		httpClient:        httpx.NewClient(aggregatorBaseURL, 3*time.Second, log),
 		log:               log,
 	}
 }
@@ -83,18 +82,9 @@ func (h *Handler) fetchHazards(ctx context.Context, hazardType, since string) ([
 		query.Set("since", since)
 	}
 	endpoint := h.aggregatorBaseURL + "/internal/hazards?" + query.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := h.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
 
 	var events []hazard.Event
-	if err := json.NewDecoder(resp.Body).Decode(&events); err != nil {
+	if err := h.httpClient.GetJSON(ctx, endpoint, nil, &events); err != nil {
 		return nil, err
 	}
 	return events, nil
@@ -118,18 +108,8 @@ func requestsRawFields(requested []string) bool {
 }
 
 func (h *Handler) fetchStatus(ctx context.Context) (*aggregatorStatus, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.aggregatorBaseURL+"/internal/status", nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := h.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
 	var status aggregatorStatus
-	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+	if err := h.httpClient.GetJSON(ctx, h.aggregatorBaseURL+"/internal/status", nil, &status); err != nil {
 		return nil, err
 	}
 	return &status, nil
