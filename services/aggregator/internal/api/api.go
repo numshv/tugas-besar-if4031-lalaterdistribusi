@@ -21,15 +21,15 @@ type Handler struct {
 func New(s store.Store, p *poller.Poller, log *slog.Logger, maxConcurrency int) http.Handler {
 	h := &Handler{store: s, poller: p, log: log}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", httpx.Health("aggregator"))
-	mux.HandleFunc("GET /internal/hazards", h.listHazards)
-	mux.HandleFunc("GET /internal/status", h.status)
+	limited := http.NewServeMux()
+	limited.HandleFunc("GET /internal/hazards", h.listHazards)
+	limited.HandleFunc("GET /internal/status", h.status)
 
-	// Batas concurrency di sisi Aggregator sendiri (bukan hanya di
-	// Client-Facing API punya B) sebagai lapisan pertahanan kedua, sesuai
-	// AGG_MAX_CONCURRENCY di .env.
-	return limitConcurrency(maxConcurrency)(mux)
+	root := http.NewServeMux()
+	root.HandleFunc("GET /health", httpx.Health("aggregator"))
+	root.Handle("/", limitConcurrency(maxConcurrency)(limited))
+
+	return root
 }
 
 func (h *Handler) listHazards(w http.ResponseWriter, r *http.Request) {
