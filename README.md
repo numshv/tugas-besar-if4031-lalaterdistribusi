@@ -50,7 +50,7 @@ that onto your machine. Resolve host port clashes by changing `*_HOST_PORT` alon
 | client-api | 8080 | `CLIENT_API_HOST_PORT` |
 | bmkg-mock | 8081 | `BMKG_HOST_PORT` |
 | pvmbg-mock | 8082 | `PVMBG_HOST_PORT` |
-| aggregator | 8083 | `AGGREGATOR_HOST_PORT` |
+| aggregator | 8083 | not published |
 | auth-service | 8084 | `AUTH_HOST_PORT` |
 | consumer-dashboard | 8085 | `CONSUMER_DASHBOARD_HOST_PORT` |
 | consumer-notifier | 8086 | `CONSUMER_NOTIFIER_HOST_PORT` |

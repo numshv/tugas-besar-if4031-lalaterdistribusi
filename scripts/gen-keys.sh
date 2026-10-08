@@ -2,15 +2,26 @@
 set -eu
 
 DIR="$(dirname "$0")/../infra/keys"
+PRIV="$DIR/jwt_private.pem"
+PUB="$DIR/jwt_public.pem"
 mkdir -p "$DIR"
 
-if [ -f "$DIR/jwt_private.pem" ]; then
+for f in "$PRIV" "$PUB"; do
+  if [ -d "$f" ]; then
+    rmdir "$f"
+    echo "removed empty directory left by docker at $f"
+  fi
+done
+
+if [ -f "$PRIV" ] && [ -f "$PUB" ]; then
   echo "key pair already exists in $DIR; remove it first to regenerate"
   exit 0
 fi
 
-openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$DIR/jwt_private.pem"
-openssl rsa -in "$DIR/jwt_private.pem" -pubout -out "$DIR/jwt_public.pem"
-chmod 600 "$DIR/jwt_private.pem"
+if [ ! -f "$PRIV" ]; then
+  openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$PRIV"
+  chmod 600 "$PRIV"
+fi
+openssl rsa -in "$PRIV" -pubout -out "$PUB"
 
-echo "key pair created in $DIR"
+echo "key pair ready in $DIR"

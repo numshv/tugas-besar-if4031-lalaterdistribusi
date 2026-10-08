@@ -40,13 +40,14 @@ var seedSpecs = []struct {
 }
 
 type Store struct {
+	run     string
 	mu      sync.RWMutex
 	reports []Report
 	seq     int
 }
 
 func NewStore(seedCount int) *Store {
-	s := &Store{}
+	s := &Store{run: fmt.Sprintf("%06x", rand.Uint32N(1<<24))}
 	now := time.Now().UTC()
 
 	for extra := seedCount - len(seedSpecs); extra > 0; extra-- {
@@ -63,11 +64,13 @@ func NewStore(seedCount int) *Store {
 	return s
 }
 
+func (s *Store) RunID() string { return s.run }
+
 func (s *Store) append(at time.Time, volcanoID, alertLevel string, eruptions int, ashHeightM, confidence float64) Report {
 	at = at.Truncate(time.Second)
 	s.seq++
 	r := Report{
-		ReportID:         fmt.Sprintf("VR-%s-%04d", at.Format("2006-0102"), s.seq),
+		ReportID:         fmt.Sprintf("VR-%s-%s-%04d", at.Format("2006-0102"), s.run, s.seq),
 		VolcanoID:        volcanoID,
 		AlertLevel:       alertLevel,
 		EruptionCount24h: eruptions,
