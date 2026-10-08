@@ -1,4 +1,3 @@
-#!/bin/sh
 set -eu
 
 BOOTSTRAP="${KAFKA_BOOTSTRAP:-kafka:9092}"

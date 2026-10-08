@@ -24,7 +24,6 @@ func main() {
 		port = "8080"
 	}
 
-	// SESUDAH
 	issuer := os.Getenv("JWT_ISSUER")
 	audience := os.Getenv("JWT_AUDIENCE")
 	jwksURL := os.Getenv("AUTH_JWKS_URL")
