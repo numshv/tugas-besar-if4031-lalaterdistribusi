@@ -187,19 +187,46 @@ Unknown fields follow `UNKNOWN_FIELD_POLICY` (`passthrough` by default).
 
 ### Problem 2: slow source, load, and outage
 
-BMKG-only latency while PVMBG takes exactly 3 seconds:
+Latency and load are measured with [k6](https://k6.io) using
+[`loadtest/loadtest.js`](loadtest/loadtest.js). It runs in Docker on the compose
+network, so k6 does not need to be installed. The script has two modes:
+
+| Mode | Virtual users | Duration | Passes when |
+| --- | --- | --- | --- |
+| `latency` | 10 SEISMIC + 10 VOLCANIC | 60 s | p95 of SEISMIC requests < 300 ms and error rate < 1% |
+| `load` | 50 SEISMIC + 20 VOLCANIC (70 parallel) | 60 s | error rate < 1% |
+
+HTTP 429 counts as a controlled rejection, not an error. If any occur, k6 reports them
+as `rejected_429`.
 
 ```bash
+loadtest() {
+  docker run --rm -i --network bnpb-m1_app-net \
+    -e SCENARIO="$1" \
+    -e CLIENT_API_URL="http://client-api:$CLIENT_API_PORT" \
+    -e AUTH_URL="http://auth-service:$AUTH_PORT" \
+    -e LT_USER="$CLIENT_FIELD_ID" -e LT_PASS="$CLIENT_FIELD_SECRET" \
+    grafana/k6:1.0.0 run - < loadtest/loadtest.js
+}
+
+# The test logs in once, so the token must outlive the run
+ACCESS_TOKEN_TTL_SECONDS=600 $DC up -d --no-deps auth-service
+
+# BMKG-only latency while PVMBG takes exactly 3 seconds
 PVMBG_DELAY_MIN_MS=3000 PVMBG_DELAY_MAX_MS=3000 $DC up -d --no-deps pvmbg-mock
 sleep 12
-$DC logs --since 10s aggregator | grep volcanic-reports    # duration_ms around 3000
-# TODO: send SEISMIC and VOLCANIC requests together and report p95 (load test tool)
-$DC up -d --no-deps pvmbg-mock                             # back to the delay in .env
+$DC logs --since 10s aggregator | grep volcanic-reports       # duration_ms around 3000
+loadtest latency | tee loadtest/output-latency.txt            # p(95) of {kind:seismic} under 300 ms
+
+# 70 parallel connections for 60 seconds
+loadtest load | tee loadtest/output-load.txt                  # http_req_failed under 1%
+
+# Back to the values in .env
+$DC up -d --no-deps pvmbg-mock auth-service
 ```
 
-Recreating the mock also resets its schema version and outage flag.
-
-<!-- TODO: load test (tool, configuration, command, where results are saved) -->
+Recreating `pvmbg-mock` also resets its schema version and outage flag. Our own runs are
+in `loadtest/output-*-3.txt`, with the k6 summary export in `loadtest/result-*-3.json`.
 
 PVMBG outage and recovery:
 
@@ -513,8 +540,8 @@ tugas-besar-if4031-lalaterdistribusi/
 
 | Name | NIM | Responsibilities |
 | :--- | :---: | :--- |
-| Noumisyifa Nabila | TODO | Aggregator: polling, schema mapping, canonical store, Kafka publisher |
+| Noumisyifa Nabila Nareswari | 13523058 | Aggregator: polling, schema mapping, canonical store, Kafka publisher |
 | Mayla Yaffa Ludmilla | 13523050 | Auth service, client API, Kafka consumers, load testing |
-| Muhammad Edo Raduputu Aprima | 13523096 | BMKG and PVMBG mocks, infrastructure (Compose, Kafka, MongoDB), shared packages, README |
+| Muhammad Edo Raduputu Aprima | 13523096 | BMKG and PVMBG mocks, infrastructure (Compose, Kafka, MongoDB), shared packages |
 
 </div>
