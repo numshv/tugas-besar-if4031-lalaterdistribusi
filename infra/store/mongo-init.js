@@ -14,7 +14,10 @@ store.createUser({
 store.createCollection("hazard_events");
 store.hazard_events.createIndex({ occurred_at: -1 });
 store.hazard_events.createIndex({ ingested_at: -1 });
-store.hazard_events.createIndex({ hazard_type: 1, occurred_at: -1 });
+store.hazard_events.createIndex(
+  { hazard_type: 1, occurred_at: -1, _id: -1 },
+  { name: "hazard_type_occurred_at_id_desc" }
+);
 store.hazard_events.createIndex({ source: 1, source_ref_id: 1 }, { unique: true });
 
 const volcanoes = [

@@ -56,9 +56,14 @@ func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, err
 }
 
 func (c *Client) GetJSON(ctx context.Context, url string, header http.Header, out any) error {
+	_, err := c.GetJSONWithResponseHeader(ctx, url, header, out, "")
+	return err
+}
+
+func (c *Client) GetJSONWithResponseHeader(ctx context.Context, url string, header http.Header, out any, responseHeader string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+		return "", fmt.Errorf("build request: %w", err)
 	}
 	for k, values := range header {
 		for _, v := range values {
@@ -69,18 +74,18 @@ func (c *Client) GetJSON(ctx context.Context, url string, header http.Header, ou
 
 	resp, err := c.Do(ctx, req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
-		return &StatusError{Status: resp.StatusCode, Body: strings.TrimSpace(string(body))}
+		return "", &StatusError{Status: resp.StatusCode, Body: strings.TrimSpace(string(body))}
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("decode response: %w", err)
+		return "", fmt.Errorf("decode response: %w", err)
 	}
-	return nil
+	return resp.Header.Get(responseHeader), nil
 }
 
 type StatusError struct {

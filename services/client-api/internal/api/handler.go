@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +15,8 @@ import (
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/hazard"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/httpx"
 )
+
+var errAggregatorBusy = errors.New("aggregator busy")
 
 type Handler struct {
 	aggregatorBaseURL string
@@ -47,6 +52,22 @@ func (h *Handler) ListHazardsHandler(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_type", "type must be SEISMIC or VOLCANIC")
 		return
 	}
+	if len(query["limit"]) > 1 || len(query["cursor"]) > 1 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_pagination", "limit and cursor may only be specified once")
+		return
+	}
+	limit, err := hazard.ParsePageLimit(query.Get("limit"))
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid_limit", err.Error())
+		return
+	}
+	cursor := query.Get("cursor")
+	if cursor != "" {
+		if _, err := hazard.DecodeCursor(cursor); err != nil {
+			httpx.Error(w, http.StatusBadRequest, "invalid_cursor", "cursor is invalid")
+			return
+		}
+	}
 	if scope == "media" && requestsRawFields(query["fields"]) {
 		httpx.Error(w, http.StatusForbidden, "forbidden_fields", "media scope cannot request raw fields")
 		return
@@ -56,15 +77,16 @@ func (h *Handler) ListHazardsHandler(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	var (
-		events    []hazard.Event
-		eventsErr error
-		status    *aggregatorStatus
-		statusErr error
+		events     []hazard.Event
+		eventsErr  error
+		nextCursor string
+		status     *aggregatorStatus
+		statusErr  error
 	)
 
 	var wg sync.WaitGroup
 	wg.Go(func() {
-		events, eventsErr = h.fetchHazards(ctx, hazardType, query.Get("since"))
+		events, nextCursor, eventsErr = h.fetchHazards(ctx, hazardType, query.Get("since"), limit, cursor)
 	})
 
 	if hazardType == string(hazard.TypeVolcanic) {
@@ -76,8 +98,15 @@ func (h *Handler) ListHazardsHandler(w http.ResponseWriter, r *http.Request) {
 
 	if eventsErr != nil {
 		h.log.ErrorContext(r.Context(), "fetch hazards failed", "error", eventsErr)
+		if errors.Is(eventsErr, errAggregatorBusy) {
+			httpx.Error(w, http.StatusTooManyRequests, "too_many_requests", "server busy, retry later")
+			return
+		}
 		httpx.Error(w, http.StatusBadGateway, "aggregator_unreachable", "failed to reach aggregator")
 		return
+	}
+	if nextCursor != "" {
+		w.Header().Set(hazard.NextCursorHeader, nextCursor)
 	}
 
 	staleSince := ""
@@ -93,19 +122,31 @@ func (h *Handler) ListHazardsHandler(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, filtered)
 }
 
-func (h *Handler) fetchHazards(ctx context.Context, hazardType, since string) ([]hazard.Event, error) {
+func (h *Handler) fetchHazards(ctx context.Context, hazardType, since string, limit int, cursor string) ([]hazard.Event, string, error) {
 	query := make(url.Values)
 	query.Set("type", hazardType)
 	if since != "" {
 		query.Set("since", since)
 	}
+	query.Set("limit", strconv.Itoa(limit))
+	if cursor != "" {
+		query.Set("cursor", cursor)
+	}
 	endpoint := h.aggregatorBaseURL + "/internal/hazards?" + query.Encode()
 
 	var events []hazard.Event
-	if err := h.httpClient.GetJSON(ctx, endpoint, nil, &events); err != nil {
-		return nil, err
+	nextCursor, err := h.httpClient.GetJSONWithResponseHeader(ctx, endpoint, nil, &events, hazard.NextCursorHeader)
+	if err != nil {
+		var statusErr *httpx.StatusError
+		if errors.As(err, &statusErr) {
+			if statusErr.Status == http.StatusTooManyRequests {
+				return nil, "", errAggregatorBusy
+			}
+			return nil, "", fmt.Errorf("aggregator status %d", statusErr.Status)
+		}
+		return nil, "", err
 	}
-	return events, nil
+	return events, nextCursor, nil
 }
 
 func requestsRawFields(requested []string) bool {
