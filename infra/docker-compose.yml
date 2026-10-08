@@ -226,15 +226,12 @@ services:
       AUTH_JWKS_URL: ${AUTH_JWKS_URL}
       JWT_ISSUER: ${JWT_ISSUER}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-client-api}
-      JWT_PUBLIC_KEY_PATH: ${JWT_PUBLIC_KEY_PATH}
       CLIENT_API_MAX_CONCURRENCY: ${MAX_CONCURRENT_REQUESTS}
       HTTP_CLIENT_TIMEOUT_MS: ${HTTP_CLIENT_TIMEOUT_MS}
       STALE_THRESHOLD_SECONDS: ${STALE_THRESHOLD_SECONDS}
       MAX_CONCURRENT_REQUESTS: ${MAX_CONCURRENT_REQUESTS}
     ports:
       - "${CLIENT_API_HOST_PORT}:${CLIENT_API_PORT}"
-    volumes:
-      - ./keys:/run/keys:ro
     networks: [app-net]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${CLIENT_API_PORT}/health >/dev/null 2>&1 || exit 1"]

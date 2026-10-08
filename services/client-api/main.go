@@ -2,15 +2,12 @@ package main
 
 import (
 	"context"
-	"crypto/rsa"
-	"crypto/x509"
-	"encoding/pem"
-	"errors"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/httpx"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/logging"
@@ -27,22 +24,27 @@ func main() {
 		port = "8080"
 	}
 
-	publicKey, err := loadPublicKey(os.Getenv("JWT_PUBLIC_KEY_PATH"))
-	if err != nil {
-		log.Error("failed to load auth public key", "error", err)
-		os.Exit(1)
-	}
+	// SESUDAH
 	issuer := os.Getenv("JWT_ISSUER")
 	audience := os.Getenv("JWT_AUDIENCE")
-	if issuer == "" || audience == "" {
-		log.Error("JWT_ISSUER and JWT_AUDIENCE must be set")
+	jwksURL := os.Getenv("AUTH_JWKS_URL")
+	if issuer == "" || audience == "" || jwksURL == "" {
+		log.Error("JWT_ISSUER, JWT_AUDIENCE, and AUTH_JWKS_URL must be set")
+		os.Exit(1)
+	}
+
+	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 10*time.Second)
+	keys, err := api.NewKeyProvider(startupCtx, jwksURL)
+	cancelStartup()
+	if err != nil {
+		log.Error("failed to fetch initial JWKS from auth-service", "error", err)
 		os.Exit(1)
 	}
 
 	handler := api.NewHandler(os.Getenv("AGGREGATOR_BASE_URL"), log)
 
 	limitedMux := http.NewServeMux()
-	limitedMux.Handle("GET /hazards", api.RequireAuth(publicKey, issuer, audience)(http.HandlerFunc(handler.ListHazardsHandler)))
+	limitedMux.Handle("GET /hazards", api.RequireAuth(keys, issuer, audience)(http.HandlerFunc(handler.ListHazardsHandler)))
 
 	maxConcurrency := getEnvInt("CLIENT_API_MAX_CONCURRENCY", 150)
 
@@ -52,31 +54,12 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	keys.StartAutoRefresh(ctx, log, 10*time.Minute)
 
 	if err := httpx.ListenAndServe(ctx, ":"+port, httpx.Middleware(log)(root), log); err != nil {
 		log.Error("server stopped", "error", err)
 		os.Exit(1)
 	}
-}
-
-func loadPublicKey(path string) (*rsa.PublicKey, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	block, _ := pem.Decode(raw)
-	if block == nil {
-		return nil, errors.New("invalid PEM in public key file")
-	}
-	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return nil, err
-	}
-	rsaPub, ok := pub.(*rsa.PublicKey)
-	if !ok {
-		return nil, errors.New("key is not RSA")
-	}
-	return rsaPub, nil
 }
 
 func getEnvInt(key string, fallback int) int {

@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/rsa"
 	"fmt"
 	"net/http"
 	"strings"
@@ -15,7 +14,7 @@ type contextKey string
 
 const scopeKey contextKey = "scope"
 
-func RequireAuth(publicKey *rsa.PublicKey, issuer, audience string) func(http.Handler) http.Handler {
+func RequireAuth(keys *KeyProvider, issuer, audience string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -36,7 +35,11 @@ func RequireAuth(publicKey *rsa.PublicKey, issuer, audience string) func(http.Ha
 				if t.Method != jwt.SigningMethodRS256 {
 					return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 				}
-				return publicKey, nil
+				pub := keys.Get()
+				if pub == nil {
+					return nil, fmt.Errorf("public key not yet available")
+				}
+				return pub, nil
 			}, jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Alg()}), jwt.WithIssuer(issuer), jwt.WithAudience(audience), jwt.WithExpirationRequired())
 			if err != nil || !parsed.Valid {
 				httpx.Error(w, http.StatusUnauthorized, "invalid_token", "token is invalid or expired")
