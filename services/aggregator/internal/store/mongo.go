@@ -41,6 +41,21 @@ func NewMongoStore(client *mongo.Client, dbName string) *MongoStore {
 	return &MongoStore{col: client.Database(dbName).Collection("hazard_events")}
 }
 
+func (s *MongoStore) EnsureIndexes(ctx context.Context) error {
+	_, err := s.col.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{
+			{Key: "hazard_type", Value: 1},
+			{Key: "occurred_at", Value: -1},
+			{Key: "_id", Value: -1},
+		},
+		Options: options.Index().SetName("hazard_type_occurred_at_id_desc"),
+	})
+	if err != nil {
+		return fmt.Errorf("create hazard pagination index: %w", err)
+	}
+	return nil
+}
+
 // document adalah representasi BSON. hazard_id dipakai sebagai _id supaya
 // upsert idempoten by design: dokumen yang sama selalu menimpa dirinya
 // sendiri, tidak pernah membuat duplikat walau di-poll berkali-kali.
@@ -96,7 +111,10 @@ func (s *MongoStore) Upsert(ctx context.Context, e hazard.Event) error {
 	return nil
 }
 
-func (s *MongoStore) ListByType(ctx context.Context, hazardType hazard.Type, since time.Time) ([]hazard.Event, error) {
+func (s *MongoStore) ListByType(ctx context.Context, hazardType hazard.Type, since time.Time, cursor *hazard.Cursor, limit int) ([]hazard.Event, bool, error) {
+	if limit < 1 || limit > hazard.MaxPageLimit {
+		return nil, false, fmt.Errorf("limit must be between 1 and %d", hazard.MaxPageLimit)
+	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
@@ -104,20 +122,35 @@ func (s *MongoStore) ListByType(ctx context.Context, hazardType hazard.Type, sin
 	if !since.IsZero() {
 		filter["occurred_at"] = bson.M{"$gte": since}
 	}
+	if cursor != nil {
+		filter["$or"] = bson.A{
+			bson.M{"occurred_at": bson.M{"$lt": cursor.OccurredAt}},
+			bson.M{"occurred_at": cursor.OccurredAt, "_id": bson.M{"$lt": cursor.HazardID}},
+		}
+	}
 
-	cur, err := s.col.Find(ctx, filter, options.Find().SetSort(bson.D{{Key: "occurred_at", Value: -1}}))
+	cur, err := s.col.Find(ctx, filter, options.Find().
+		SetSort(bson.D{{Key: "occurred_at", Value: -1}, {Key: "_id", Value: -1}}).
+		SetLimit(int64(limit+1)))
 	if err != nil {
-		return nil, fmt.Errorf("find by type=%s: %w", hazardType, err)
+		return nil, false, fmt.Errorf("find by type=%s: %w", hazardType, err)
 	}
 	defer cur.Close(ctx)
 
-	out := make([]hazard.Event, 0, 64)
+	out := make([]hazard.Event, 0, limit+1)
 	for cur.Next(ctx) {
 		var d document
 		if err := cur.Decode(&d); err != nil {
-			return nil, fmt.Errorf("decode document: %w", err)
+			return nil, false, fmt.Errorf("decode document: %w", err)
 		}
 		out = append(out, fromDocument(d))
 	}
-	return out, cur.Err()
+	if err := cur.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	return out, hasMore, nil
 }

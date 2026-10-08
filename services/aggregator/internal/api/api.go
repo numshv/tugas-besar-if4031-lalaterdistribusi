@@ -35,15 +35,46 @@ func New(s store.Store, p *poller.Poller, log *slog.Logger, maxConcurrency int) 
 func (h *Handler) listHazards(w http.ResponseWriter, r *http.Request) {
 	typ := hazard.Type(r.URL.Query().Get("type"))
 	since := parseSinceOrZero(r)
+	query := r.URL.Query()
+	if len(query["limit"]) > 1 || len(query["cursor"]) > 1 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_pagination", "limit and cursor may only be specified once")
+		return
+	}
+	limit, err := hazard.ParsePageLimit(query.Get("limit"))
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid_limit", err.Error())
+		return
+	}
+	var cursor *hazard.Cursor
+	if rawCursor := query.Get("cursor"); rawCursor != "" {
+		decoded, err := hazard.DecodeCursor(rawCursor)
+		if err != nil {
+			httpx.Error(w, http.StatusBadRequest, "invalid_cursor", "cursor is invalid")
+			return
+		}
+		cursor = &decoded
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 
-	events, err := h.store.ListByType(ctx, typ, since)
+	events, hasMore, err := h.store.ListByType(ctx, typ, since, cursor, limit)
 	if err != nil {
 		h.log.ErrorContext(r.Context(), "list hazards failed", "error", err)
 		httpx.Error(w, http.StatusInternalServerError, "store_error", "failed to read hazard events")
 		return
+	}
+	if hasMore && len(events) > 0 {
+		nextCursor, err := hazard.EncodeCursor(hazard.Cursor{
+			OccurredAt: events[len(events)-1].OccurredAt,
+			HazardID:   events[len(events)-1].HazardID,
+		})
+		if err != nil {
+			h.log.ErrorContext(r.Context(), "encode hazard cursor failed", "error", err)
+			httpx.Error(w, http.StatusInternalServerError, "cursor_error", "failed to encode page cursor")
+			return
+		}
+		w.Header().Set(hazard.NextCursorHeader, nextCursor)
 	}
 	httpx.JSON(w, http.StatusOK, events)
 }

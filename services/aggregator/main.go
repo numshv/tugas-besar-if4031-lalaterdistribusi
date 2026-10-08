@@ -56,6 +56,12 @@ func run(log *slog.Logger) error {
 	}()
 
 	mongoStore := store.NewMongoStore(mongoClient, cfg.MongoDB)
+	indexCtx, cancelIndexes := context.WithTimeout(ctx, 10*time.Second)
+	if err := mongoStore.EnsureIndexes(indexCtx); err != nil {
+		cancelIndexes()
+		return fmt.Errorf("ensure mongo indexes: %w", err)
+	}
+	cancelIndexes()
 	volcanoResolver, err := store.NewMongoVolcanoResolver(ctx, mongoClient, cfg.MongoDB)
 	if err != nil {
 		return fmt.Errorf("init volcano resolver: %w", err)
