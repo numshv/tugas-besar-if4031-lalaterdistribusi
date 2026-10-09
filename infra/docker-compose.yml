@@ -184,6 +184,8 @@ services:
       REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS}
       JWT_ISSUER: ${JWT_ISSUER}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-client-api}
+      JWT_PRIVATE_KEY_PATH: ${JWT_PRIVATE_KEY_PATH}
+      AUTH_STATE_PATH: /data/revoked-refresh-tokens.json
       CLIENT_MEDIA_ID: ${CLIENT_MEDIA_ID}
       CLIENT_MEDIA_SECRET: ${CLIENT_MEDIA_SECRET}
       CLIENT_FIELD_ID: ${CLIENT_FIELD_ID}
@@ -191,6 +193,7 @@ services:
       CLIENT_OPS_ID: ${CLIENT_OPS_ID}
       CLIENT_OPS_SECRET: ${CLIENT_OPS_SECRET}
     volumes:
+      - ./keys:/run/keys:ro
       - auth-state:/data
     ports:
       - "${AUTH_HOST_PORT}:${AUTH_PORT}"
@@ -218,15 +221,12 @@ services:
       AGGREGATOR_BASE_URL: ${AGGREGATOR_BASE_URL}
       AUTH_BASE_URL: ${AUTH_BASE_URL}
       AUTH_JWKS_URL: ${AUTH_JWKS_URL}
-      JWT_PUBLIC_KEY_PATH: ${JWT_PUBLIC_KEY_PATH}
       JWT_ISSUER: ${JWT_ISSUER}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-client-api}
       CLIENT_API_MAX_CONCURRENCY: ${MAX_CONCURRENT_REQUESTS}
       HTTP_CLIENT_TIMEOUT_MS: ${HTTP_CLIENT_TIMEOUT_MS}
       STALE_THRESHOLD_SECONDS: ${STALE_THRESHOLD_SECONDS}
       MAX_CONCURRENT_REQUESTS: ${MAX_CONCURRENT_REQUESTS}
-    volumes:
-      - ./keys:/run/keys:ro
     ports:
       - "${CLIENT_API_HOST_PORT}:${CLIENT_API_PORT}"
     networks: [app-net]
