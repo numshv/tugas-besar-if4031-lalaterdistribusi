@@ -1,5 +1,10 @@
 set -u
 
+ENV_FILE="$(dirname "$0")/../.env"
+if [ -f "$ENV_FILE" ]; then
+  set -a; . "$ENV_FILE"; set +a
+fi
+
 report() {
   name=$1
   where=$2
