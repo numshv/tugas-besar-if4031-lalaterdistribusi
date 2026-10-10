@@ -258,6 +258,19 @@ curl -s -H "Authorization: Bearer $FIELD" "$API/hazards?type=VOLCANIC" | grep -c
 
 ### Problem 3: authentication and trust
 
+Run the end-to-end acceptance checks below from the repository root after starting
+the services. The verifier uses the live auth-service TTL, waits for natural expiry,
+and writes status-only evidence (never tokens or credential values):
+
+```bash
+bash scripts/verify-criteria.sh
+```
+
+It checks source-specific BMKG/PVMBG credentials, Media field classification and
+server-side rejection, Field token expiry/refresh, and the committed-secret audit.
+The expiry check takes the configured access-token TTL plus two seconds (60 seconds
+by default).
+
 ```bash
 # Credentials do not work across agencies
 code -H "Authorization: Bearer $BMKG_API_KEY" "$PVMBG/volcanic-reports"    # 403
