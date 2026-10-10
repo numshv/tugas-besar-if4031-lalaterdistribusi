@@ -1,0 +1,836 @@
+P2 verification started: 2026-10-10T12:32:01+07:00
+Evidence file: evidence/p2/verify-p2-20261010-123201.txt
+Services are tested in place; this verifier does not recreate containers or change token TTL.
+PASS | bnpb-pvmbg-mock is running | expected=running actual=running
+PASS | bnpb-aggregator is running | expected=running actual=running
+PASS | bnpb-client-api is running | expected=running actual=running
+PASS | bnpb-auth-service is running | expected=running actual=running
+
+[1] HOL isolation: 3-second PVMBG delay and BMKG-only latency
+PASS | Live PVMBG minimum delay is 3000 ms | expected=3000 actual=3000
+PASS | Live PVMBG maximum delay is 3000 ms | expected=3000 actual=3000
+PASS | Direct PVMBG request #1 succeeds | expected=200 actual=200
+PASS | Direct PVMBG request #1 takes at least 2.9 seconds | expected=yes actual=yes
+INFO | Direct PVMBG request #1 time_total | 3.004827s
+PASS | Direct PVMBG request #2 succeeds | expected=200 actual=200
+PASS | Direct PVMBG request #2 takes at least 2.9 seconds | expected=yes actual=yes
+INFO | Direct PVMBG request #2 time_total | 3.005041s
+PASS | Direct PVMBG request #3 succeeds | expected=200 actual=200
+PASS | Direct PVMBG request #3 takes at least 2.9 seconds | expected=yes actual=yes
+INFO | Direct PVMBG request #3 time_total | 3.002642s
+INFO | k6 scenario | iso-a (10 seismic VUs + 0 volcanic VUs, 60s)
+
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+     execution: local
+        script: -
+        output: -
+
+     scenarios: (100.00%) 1 scenario, 10 max VUs, 1m10s max duration (incl. graceful stop):
+              * seismic: 10 looping VUs for 1m0s (exec: seismic, gracefulStop: 10s)
+
+
+running (0m01.0s), 10/10 VUs, 434 complete and 0 interrupted iterations
+seismic   [   2% ] 10 VUs  0m01.0s/1m0s
+
+running (0m02.0s), 10/10 VUs, 1083 complete and 0 interrupted iterations
+seismic   [   3% ] 10 VUs  0m02.0s/1m0s
+
+running (0m03.0s), 10/10 VUs, 1554 complete and 0 interrupted iterations
+seismic   [   5% ] 10 VUs  0m03.0s/1m0s
+
+running (0m04.0s), 10/10 VUs, 2223 complete and 0 interrupted iterations
+seismic   [   7% ] 10 VUs  0m04.0s/1m0s
+
+running (0m05.0s), 10/10 VUs, 2749 complete and 0 interrupted iterations
+seismic   [   8% ] 10 VUs  0m05.0s/1m0s
+
+running (0m06.0s), 10/10 VUs, 3221 complete and 0 interrupted iterations
+seismic   [  10% ] 10 VUs  0m06.0s/1m0s
+
+running (0m07.0s), 10/10 VUs, 3696 complete and 0 interrupted iterations
+seismic   [  12% ] 10 VUs  0m07.0s/1m0s
+
+running (0m08.0s), 10/10 VUs, 4132 complete and 0 interrupted iterations
+seismic   [  13% ] 10 VUs  0m08.0s/1m0s
+
+running (0m09.0s), 10/10 VUs, 4535 complete and 0 interrupted iterations
+seismic   [  15% ] 10 VUs  0m09.0s/1m0s
+
+running (0m10.0s), 10/10 VUs, 5038 complete and 0 interrupted iterations
+seismic   [  17% ] 10 VUs  0m10.0s/1m0s
+
+running (0m11.0s), 10/10 VUs, 5570 complete and 0 interrupted iterations
+seismic   [  18% ] 10 VUs  0m11.0s/1m0s
+
+running (0m12.0s), 10/10 VUs, 6052 complete and 0 interrupted iterations
+seismic   [  20% ] 10 VUs  0m12.0s/1m0s
+
+running (0m13.0s), 10/10 VUs, 6671 complete and 0 interrupted iterations
+seismic   [  22% ] 10 VUs  0m13.0s/1m0s
+
+running (0m14.0s), 10/10 VUs, 7348 complete and 0 interrupted iterations
+seismic   [  23% ] 10 VUs  0m14.0s/1m0s
+
+running (0m15.0s), 10/10 VUs, 8041 complete and 0 interrupted iterations
+seismic   [  25% ] 10 VUs  0m15.0s/1m0s
+
+running (0m16.0s), 10/10 VUs, 8766 complete and 0 interrupted iterations
+seismic   [  27% ] 10 VUs  0m16.0s/1m0s
+
+running (0m17.0s), 10/10 VUs, 9455 complete and 0 interrupted iterations
+seismic   [  28% ] 10 VUs  0m17.0s/1m0s
+
+running (0m20.0s), 10/10 VUs, 10158 complete and 0 interrupted iterations
+seismic   [  30% ] 10 VUs  0m18.0s/1m0s
+
+running (0m21.0s), 10/10 VUs, 10910 complete and 0 interrupted iterations
+seismic   [  32% ] 10 VUs  0m19.0s/1m0s
+
+running (0m22.0s), 10/10 VUs, 11562 complete and 0 interrupted iterations
+seismic   [  33% ] 10 VUs  0m20.0s/1m0s
+
+running (0m23.0s), 10/10 VUs, 12163 complete and 0 interrupted iterations
+seismic   [  35% ] 10 VUs  0m21.0s/1m0s
+
+running (0m24.0s), 10/10 VUs, 12902 complete and 0 interrupted iterations
+seismic   [  37% ] 10 VUs  0m22.0s/1m0s
+
+running (0m25.0s), 10/10 VUs, 13591 complete and 0 interrupted iterations
+seismic   [  38% ] 10 VUs  0m23.0s/1m0s
+
+running (0m26.0s), 10/10 VUs, 14324 complete and 0 interrupted iterations
+seismic   [  40% ] 10 VUs  0m24.0s/1m0s
+
+running (0m27.0s), 10/10 VUs, 14947 complete and 0 interrupted iterations
+seismic   [  42% ] 10 VUs  0m25.0s/1m0s
+
+running (0m28.0s), 10/10 VUs, 15607 complete and 0 interrupted iterations
+seismic   [  43% ] 10 VUs  0m26.0s/1m0s
+
+running (0m29.0s), 10/10 VUs, 16154 complete and 0 interrupted iterations
+seismic   [  45% ] 10 VUs  0m27.0s/1m0s
+
+running (0m30.0s), 10/10 VUs, 16730 complete and 0 interrupted iterations
+seismic   [  47% ] 10 VUs  0m28.0s/1m0s
+
+running (0m31.0s), 10/10 VUs, 17384 complete and 0 interrupted iterations
+seismic   [  48% ] 10 VUs  0m29.0s/1m0s
+
+running (0m32.0s), 10/10 VUs, 18139 complete and 0 interrupted iterations
+seismic   [  50% ] 10 VUs  0m30.0s/1m0s
+
+running (0m33.0s), 10/10 VUs, 18901 complete and 0 interrupted iterations
+seismic   [  52% ] 10 VUs  0m31.0s/1m0s
+
+running (0m34.0s), 10/10 VUs, 19622 complete and 0 interrupted iterations
+seismic   [  53% ] 10 VUs  0m32.0s/1m0s
+
+running (0m35.0s), 10/10 VUs, 20266 complete and 0 interrupted iterations
+seismic   [  55% ] 10 VUs  0m33.0s/1m0s
+
+running (0m36.0s), 10/10 VUs, 20933 complete and 0 interrupted iterations
+seismic   [  57% ] 10 VUs  0m34.0s/1m0s
+
+running (0m37.0s), 10/10 VUs, 21678 complete and 0 interrupted iterations
+seismic   [  58% ] 10 VUs  0m35.0s/1m0s
+
+running (0m38.0s), 10/10 VUs, 22433 complete and 0 interrupted iterations
+seismic   [  60% ] 10 VUs  0m36.0s/1m0s
+
+running (0m39.0s), 10/10 VUs, 23068 complete and 0 interrupted iterations
+seismic   [  62% ] 10 VUs  0m37.0s/1m0s
+
+running (0m40.0s), 10/10 VUs, 23785 complete and 0 interrupted iterations
+seismic   [  63% ] 10 VUs  0m38.0s/1m0s
+
+running (0m41.0s), 10/10 VUs, 24501 complete and 0 interrupted iterations
+seismic   [  65% ] 10 VUs  0m39.0s/1m0s
+
+running (0m42.0s), 10/10 VUs, 25213 complete and 0 interrupted iterations
+seismic   [  67% ] 10 VUs  0m40.0s/1m0s
+
+running (0m43.0s), 10/10 VUs, 25915 complete and 0 interrupted iterations
+seismic   [  68% ] 10 VUs  0m41.0s/1m0s
+
+running (0m44.0s), 10/10 VUs, 26513 complete and 0 interrupted iterations
+seismic   [  70% ] 10 VUs  0m42.0s/1m0s
+
+running (0m45.0s), 10/10 VUs, 27194 complete and 0 interrupted iterations
+seismic   [  72% ] 10 VUs  0m43.0s/1m0s
+
+running (0m46.0s), 10/10 VUs, 27796 complete and 0 interrupted iterations
+seismic   [  73% ] 10 VUs  0m44.0s/1m0s
+
+running (0m47.0s), 10/10 VUs, 28449 complete and 0 interrupted iterations
+seismic   [  75% ] 10 VUs  0m45.0s/1m0s
+
+running (0m48.0s), 10/10 VUs, 29136 complete and 0 interrupted iterations
+seismic   [  77% ] 10 VUs  0m46.0s/1m0s
+
+running (0m49.0s), 10/10 VUs, 29847 complete and 0 interrupted iterations
+seismic   [  78% ] 10 VUs  0m47.0s/1m0s
+
+running (0m51.9s), 10/10 VUs, 30513 complete and 0 interrupted iterations
+seismic   [  80% ] 10 VUs  0m48.0s/1m0s
+
+running (0m52.9s), 10/10 VUs, 31171 complete and 0 interrupted iterations
+seismic   [  82% ] 10 VUs  0m49.0s/1m0s
+
+running (0m53.9s), 10/10 VUs, 31906 complete and 0 interrupted iterations
+seismic   [  83% ] 10 VUs  0m50.0s/1m0s
+
+running (0m54.9s), 10/10 VUs, 32661 complete and 0 interrupted iterations
+seismic   [  85% ] 10 VUs  0m51.0s/1m0s
+
+running (0m55.9s), 10/10 VUs, 33420 complete and 0 interrupted iterations
+seismic   [  87% ] 10 VUs  0m52.0s/1m0s
+
+running (0m56.9s), 10/10 VUs, 34129 complete and 0 interrupted iterations
+seismic   [  88% ] 10 VUs  0m53.0s/1m0s
+
+running (0m57.9s), 10/10 VUs, 34871 complete and 0 interrupted iterations
+seismic   [  90% ] 10 VUs  0m54.0s/1m0s
+
+running (0m58.9s), 10/10 VUs, 35602 complete and 0 interrupted iterations
+seismic   [  92% ] 10 VUs  0m55.0s/1m0s
+
+running (0m59.9s), 10/10 VUs, 36318 complete and 0 interrupted iterations
+seismic   [  93% ] 10 VUs  0m56.0s/1m0s
+
+running (1m00.9s), 10/10 VUs, 36903 complete and 0 interrupted iterations
+seismic   [  95% ] 10 VUs  0m57.0s/1m0s
+
+running (1m01.9s), 10/10 VUs, 37347 complete and 0 interrupted iterations
+seismic   [  97% ] 10 VUs  0m58.0s/1m0s
+
+running (1m02.9s), 10/10 VUs, 37957 complete and 0 interrupted iterations
+seismic   [  98% ] 10 VUs  0m59.0s/1m0s
+
+running (1m03.9s), 10/10 VUs, 38661 complete and 0 interrupted iterations
+seismic   [ 100% ] 10 VUs  1m00.0s/1m0s
+P2METRIC mode=iso-a
+P2METRIC test_run_duration_ms=63868
+P2METRIC seismic_vus=10
+P2METRIC volcanic_vus=0
+P2METRIC vus_max=10
+P2METRIC api_requests=38671
+P2METRIC api_p95_ms=27.377528499999997
+P2METRIC seismic_p95_ms=27.377528499999997
+P2METRIC seismic_max_ms=1328.776615
+P2METRIC unexpected_rate=0
+P2METRIC rejected_429=NA
+
+running (1m03.9s), 00/10 VUs, 38671 complete and 0 interrupted iterations
+seismic ✓ [ 100% ] 10 VUs  1m0s
+PASS | Seismic-only baseline k6 completed | expected=yes actual=yes
+PASS | Seismic-only baseline p95 is below 300 ms | expected=yes actual=yes
+PASS | Seismic-only baseline unexpected status rate below 1% | expected=yes actual=yes
+INFO | Seismic-only p95 latency | 27.377528499999997ms
+INFO | k6 scenario | iso-b (10 seismic VUs + 10 volcanic VUs, 60s)
+
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+     execution: local
+        script: -
+        output: -
+
+     scenarios: (100.00%) 2 scenarios, 20 max VUs, 1m10s max duration (incl. graceful stop):
+              * seismic: 10 looping VUs for 1m0s (exec: seismic, gracefulStop: 10s)
+              * volcanic: 10 looping VUs for 1m0s (exec: volcanic, gracefulStop: 10s)
+
+
+running (0m01.0s), 20/20 VUs, 562 complete and 0 interrupted iterations
+seismic    [   2% ] 10 VUs  0m01.0s/1m0s
+volcanic   [   2% ] 10 VUs  0m01.0s/1m0s
+
+running (0m02.0s), 20/20 VUs, 1314 complete and 0 interrupted iterations
+seismic    [   3% ] 10 VUs  0m02.0s/1m0s
+volcanic   [   3% ] 10 VUs  0m02.0s/1m0s
+
+running (0m03.0s), 20/20 VUs, 2148 complete and 0 interrupted iterations
+seismic    [   5% ] 10 VUs  0m03.0s/1m0s
+volcanic   [   5% ] 10 VUs  0m03.0s/1m0s
+
+running (0m04.0s), 20/20 VUs, 2913 complete and 0 interrupted iterations
+seismic    [   7% ] 10 VUs  0m04.0s/1m0s
+volcanic   [   7% ] 10 VUs  0m04.0s/1m0s
+
+running (0m05.0s), 20/20 VUs, 3671 complete and 0 interrupted iterations
+seismic    [   8% ] 10 VUs  0m05.0s/1m0s
+volcanic   [   8% ] 10 VUs  0m05.0s/1m0s
+
+running (0m06.0s), 20/20 VUs, 4301 complete and 0 interrupted iterations
+seismic    [  10% ] 10 VUs  0m06.0s/1m0s
+volcanic   [  10% ] 10 VUs  0m06.0s/1m0s
+
+running (0m07.0s), 20/20 VUs, 4916 complete and 0 interrupted iterations
+seismic    [  12% ] 10 VUs  0m07.0s/1m0s
+volcanic   [  12% ] 10 VUs  0m07.0s/1m0s
+
+running (0m08.0s), 20/20 VUs, 5521 complete and 0 interrupted iterations
+seismic    [  13% ] 10 VUs  0m08.0s/1m0s
+volcanic   [  13% ] 10 VUs  0m08.0s/1m0s
+
+running (0m09.0s), 20/20 VUs, 6154 complete and 0 interrupted iterations
+seismic    [  15% ] 10 VUs  0m09.0s/1m0s
+volcanic   [  15% ] 10 VUs  0m09.0s/1m0s
+
+running (0m10.0s), 20/20 VUs, 6761 complete and 0 interrupted iterations
+seismic    [  17% ] 10 VUs  0m10.0s/1m0s
+volcanic   [  17% ] 10 VUs  0m10.0s/1m0s
+
+running (0m11.0s), 20/20 VUs, 7421 complete and 0 interrupted iterations
+seismic    [  18% ] 10 VUs  0m11.0s/1m0s
+volcanic   [  18% ] 10 VUs  0m11.0s/1m0s
+
+running (0m12.0s), 20/20 VUs, 8097 complete and 0 interrupted iterations
+seismic    [  20% ] 10 VUs  0m12.0s/1m0s
+volcanic   [  20% ] 10 VUs  0m12.0s/1m0s
+
+running (0m13.0s), 20/20 VUs, 8792 complete and 0 interrupted iterations
+seismic    [  22% ] 10 VUs  0m13.0s/1m0s
+volcanic   [  22% ] 10 VUs  0m13.0s/1m0s
+
+running (0m14.0s), 20/20 VUs, 9495 complete and 0 interrupted iterations
+seismic    [  23% ] 10 VUs  0m14.0s/1m0s
+volcanic   [  23% ] 10 VUs  0m14.0s/1m0s
+
+running (0m15.7s), 20/20 VUs, 10230 complete and 0 interrupted iterations
+seismic    [  25% ] 10 VUs  0m15.0s/1m0s
+volcanic   [  25% ] 10 VUs  0m15.0s/1m0s
+
+running (0m18.0s), 20/20 VUs, 10961 complete and 0 interrupted iterations
+seismic    [  27% ] 10 VUs  0m16.0s/1m0s
+volcanic   [  27% ] 10 VUs  0m16.0s/1m0s
+
+running (0m19.0s), 20/20 VUs, 11699 complete and 0 interrupted iterations
+seismic    [  28% ] 10 VUs  0m17.0s/1m0s
+volcanic   [  28% ] 10 VUs  0m17.0s/1m0s
+
+running (0m20.0s), 20/20 VUs, 12453 complete and 0 interrupted iterations
+seismic    [  30% ] 10 VUs  0m18.0s/1m0s
+volcanic   [  30% ] 10 VUs  0m18.0s/1m0s
+
+running (0m21.0s), 20/20 VUs, 13134 complete and 0 interrupted iterations
+seismic    [  32% ] 10 VUs  0m19.0s/1m0s
+volcanic   [  32% ] 10 VUs  0m19.0s/1m0s
+
+running (0m22.0s), 20/20 VUs, 13887 complete and 0 interrupted iterations
+seismic    [  33% ] 10 VUs  0m20.0s/1m0s
+volcanic   [  33% ] 10 VUs  0m20.0s/1m0s
+
+running (0m23.0s), 20/20 VUs, 14586 complete and 0 interrupted iterations
+seismic    [  35% ] 10 VUs  0m21.0s/1m0s
+volcanic   [  35% ] 10 VUs  0m21.0s/1m0s
+
+running (0m24.0s), 20/20 VUs, 15389 complete and 0 interrupted iterations
+seismic    [  37% ] 10 VUs  0m22.0s/1m0s
+volcanic   [  37% ] 10 VUs  0m22.0s/1m0s
+
+running (0m25.0s), 20/20 VUs, 16143 complete and 0 interrupted iterations
+seismic    [  38% ] 10 VUs  0m23.0s/1m0s
+volcanic   [  38% ] 10 VUs  0m23.0s/1m0s
+
+running (0m26.0s), 20/20 VUs, 16861 complete and 0 interrupted iterations
+seismic    [  40% ] 10 VUs  0m24.0s/1m0s
+volcanic   [  40% ] 10 VUs  0m24.0s/1m0s
+
+running (0m27.0s), 20/20 VUs, 17559 complete and 0 interrupted iterations
+seismic    [  42% ] 10 VUs  0m25.0s/1m0s
+volcanic   [  42% ] 10 VUs  0m25.0s/1m0s
+
+running (0m28.0s), 20/20 VUs, 18106 complete and 0 interrupted iterations
+seismic    [  43% ] 10 VUs  0m26.0s/1m0s
+volcanic   [  43% ] 10 VUs  0m26.0s/1m0s
+
+running (0m29.0s), 20/20 VUs, 18723 complete and 0 interrupted iterations
+seismic    [  45% ] 10 VUs  0m27.0s/1m0s
+volcanic   [  45% ] 10 VUs  0m27.0s/1m0s
+
+running (0m30.0s), 20/20 VUs, 19381 complete and 0 interrupted iterations
+seismic    [  47% ] 10 VUs  0m28.0s/1m0s
+volcanic   [  47% ] 10 VUs  0m28.0s/1m0s
+
+running (0m31.0s), 20/20 VUs, 20002 complete and 0 interrupted iterations
+seismic    [  48% ] 10 VUs  0m29.0s/1m0s
+volcanic   [  48% ] 10 VUs  0m29.0s/1m0s
+
+running (0m32.0s), 20/20 VUs, 20690 complete and 0 interrupted iterations
+seismic    [  50% ] 10 VUs  0m30.0s/1m0s
+volcanic   [  50% ] 10 VUs  0m30.0s/1m0s
+
+running (0m33.0s), 20/20 VUs, 21401 complete and 0 interrupted iterations
+seismic    [  52% ] 10 VUs  0m31.0s/1m0s
+volcanic   [  52% ] 10 VUs  0m31.0s/1m0s
+
+running (0m34.0s), 20/20 VUs, 22068 complete and 0 interrupted iterations
+seismic    [  53% ] 10 VUs  0m32.0s/1m0s
+volcanic   [  53% ] 10 VUs  0m32.0s/1m0s
+
+running (0m35.0s), 20/20 VUs, 22835 complete and 0 interrupted iterations
+seismic    [  55% ] 10 VUs  0m33.0s/1m0s
+volcanic   [  55% ] 10 VUs  0m33.0s/1m0s
+
+running (0m36.0s), 20/20 VUs, 23705 complete and 0 interrupted iterations
+seismic    [  57% ] 10 VUs  0m34.0s/1m0s
+volcanic   [  57% ] 10 VUs  0m34.0s/1m0s
+
+running (0m37.0s), 20/20 VUs, 24593 complete and 0 interrupted iterations
+seismic    [  58% ] 10 VUs  0m35.0s/1m0s
+volcanic   [  58% ] 10 VUs  0m35.0s/1m0s
+
+running (0m38.0s), 20/20 VUs, 25386 complete and 0 interrupted iterations
+seismic    [  60% ] 10 VUs  0m36.0s/1m0s
+volcanic   [  60% ] 10 VUs  0m36.0s/1m0s
+
+running (0m39.0s), 20/20 VUs, 26167 complete and 0 interrupted iterations
+seismic    [  62% ] 10 VUs  0m37.0s/1m0s
+volcanic   [  62% ] 10 VUs  0m37.0s/1m0s
+
+running (0m40.0s), 20/20 VUs, 27008 complete and 0 interrupted iterations
+seismic    [  63% ] 10 VUs  0m38.0s/1m0s
+volcanic   [  63% ] 10 VUs  0m38.0s/1m0s
+
+running (0m41.0s), 20/20 VUs, 27865 complete and 0 interrupted iterations
+seismic    [  65% ] 10 VUs  0m39.0s/1m0s
+volcanic   [  65% ] 10 VUs  0m39.0s/1m0s
+
+running (0m42.0s), 20/20 VUs, 28407 complete and 0 interrupted iterations
+seismic    [  67% ] 10 VUs  0m40.0s/1m0s
+volcanic   [  67% ] 10 VUs  0m40.0s/1m0s
+
+running (0m43.0s), 20/20 VUs, 29043 complete and 0 interrupted iterations
+seismic    [  68% ] 10 VUs  0m41.0s/1m0s
+volcanic   [  68% ] 10 VUs  0m41.0s/1m0s
+
+running (0m44.0s), 20/20 VUs, 29782 complete and 0 interrupted iterations
+seismic    [  70% ] 10 VUs  0m42.0s/1m0s
+volcanic   [  70% ] 10 VUs  0m42.0s/1m0s
+
+running (0m45.0s), 20/20 VUs, 30542 complete and 0 interrupted iterations
+seismic    [  72% ] 10 VUs  0m43.0s/1m0s
+volcanic   [  72% ] 10 VUs  0m43.0s/1m0s
+
+running (0m46.0s), 20/20 VUs, 31217 complete and 0 interrupted iterations
+seismic    [  73% ] 10 VUs  0m44.0s/1m0s
+volcanic   [  73% ] 10 VUs  0m44.0s/1m0s
+
+running (0m47.6s), 20/20 VUs, 31901 complete and 0 interrupted iterations
+seismic    [  75% ] 10 VUs  0m45.0s/1m0s
+volcanic   [  75% ] 10 VUs  0m45.0s/1m0s
+
+running (0m49.9s), 20/20 VUs, 32583 complete and 0 interrupted iterations
+seismic    [  77% ] 10 VUs  0m46.0s/1m0s
+volcanic   [  77% ] 10 VUs  0m46.0s/1m0s
+
+running (0m50.9s), 20/20 VUs, 33315 complete and 0 interrupted iterations
+seismic    [  78% ] 10 VUs  0m47.0s/1m0s
+volcanic   [  78% ] 10 VUs  0m47.0s/1m0s
+
+running (0m51.9s), 20/20 VUs, 34139 complete and 0 interrupted iterations
+seismic    [  80% ] 10 VUs  0m48.0s/1m0s
+volcanic   [  80% ] 10 VUs  0m48.0s/1m0s
+
+running (0m52.9s), 20/20 VUs, 34916 complete and 0 interrupted iterations
+seismic    [  82% ] 10 VUs  0m49.0s/1m0s
+volcanic   [  82% ] 10 VUs  0m49.0s/1m0s
+
+running (0m53.9s), 20/20 VUs, 35749 complete and 0 interrupted iterations
+seismic    [  83% ] 10 VUs  0m50.0s/1m0s
+volcanic   [  83% ] 10 VUs  0m50.0s/1m0s
+
+running (0m54.9s), 20/20 VUs, 36479 complete and 0 interrupted iterations
+seismic    [  85% ] 10 VUs  0m51.0s/1m0s
+volcanic   [  85% ] 10 VUs  0m51.0s/1m0s
+
+running (0m55.9s), 20/20 VUs, 37216 complete and 0 interrupted iterations
+seismic    [  87% ] 10 VUs  0m52.0s/1m0s
+volcanic   [  87% ] 10 VUs  0m52.0s/1m0s
+
+running (0m56.9s), 20/20 VUs, 37983 complete and 0 interrupted iterations
+seismic    [  88% ] 10 VUs  0m53.0s/1m0s
+volcanic   [  88% ] 10 VUs  0m53.0s/1m0s
+
+running (0m57.9s), 20/20 VUs, 38792 complete and 0 interrupted iterations
+seismic    [  90% ] 10 VUs  0m54.0s/1m0s
+volcanic   [  90% ] 10 VUs  0m54.0s/1m0s
+
+running (0m58.9s), 20/20 VUs, 39610 complete and 0 interrupted iterations
+seismic    [  92% ] 10 VUs  0m55.0s/1m0s
+volcanic   [  92% ] 10 VUs  0m55.0s/1m0s
+
+running (0m59.9s), 20/20 VUs, 40306 complete and 0 interrupted iterations
+seismic    [  93% ] 10 VUs  0m56.0s/1m0s
+volcanic   [  93% ] 10 VUs  0m56.0s/1m0s
+
+running (1m00.9s), 20/20 VUs, 40957 complete and 0 interrupted iterations
+seismic    [  95% ] 10 VUs  0m57.0s/1m0s
+volcanic   [  95% ] 10 VUs  0m57.0s/1m0s
+
+running (1m01.9s), 20/20 VUs, 41607 complete and 0 interrupted iterations
+seismic    [  97% ] 10 VUs  0m58.0s/1m0s
+volcanic   [  97% ] 10 VUs  0m58.0s/1m0s
+
+running (1m02.9s), 20/20 VUs, 42271 complete and 0 interrupted iterations
+seismic    [  98% ] 10 VUs  0m59.0s/1m0s
+volcanic   [  98% ] 10 VUs  0m59.0s/1m0s
+
+running (1m03.9s), 20/20 VUs, 42999 complete and 0 interrupted iterations
+seismic    [ 100% ] 10 VUs  1m00.0s/1m0s
+volcanic   [ 100% ] 10 VUs  1m00.0s/1m0s
+P2METRIC mode=iso-b
+P2METRIC test_run_duration_ms=63944
+P2METRIC seismic_vus=10
+P2METRIC volcanic_vus=10
+P2METRIC vus_max=20
+P2METRIC api_requests=43020
+P2METRIC api_p95_ms=51.9703996
+P2METRIC seismic_p95_ms=51.84631055
+P2METRIC seismic_max_ms=1340.78375
+P2METRIC unexpected_rate=0
+P2METRIC rejected_429=NA
+
+running (1m03.9s), 00/20 VUs, 43020 complete and 0 interrupted iterations
+seismic  ✓ [ 100% ] 10 VUs  1m0s
+volcanic ✓ [ 100% ] 10 VUs  1m0s
+PASS | Concurrent seismic + volcanic k6 completed | expected=yes actual=yes
+PASS | Concurrent seismic p95 is below 300 ms | expected=yes actual=yes
+PASS | Concurrent unexpected status rate below 1% | expected=yes actual=yes
+INFO | Concurrent seismic p95 latency | 51.84631055ms
+INFO | Concurrent seismic maximum latency | 1340.78375ms
+INFO | Concurrent p95 minus seismic-only p95 | 24.47ms
+
+[2] Sustained load: 50 seismic + 20 volcanic clients for 60 seconds
+INFO | k6 scenario | load (50 seismic VUs + 20 volcanic VUs, 60s)
+
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+     execution: local
+        script: -
+        output: -
+
+     scenarios: (100.00%) 2 scenarios, 70 max VUs, 1m10s max duration (incl. graceful stop):
+              * seismic: 50 looping VUs for 1m0s (exec: seismic, gracefulStop: 10s)
+              * volcanic: 20 looping VUs for 1m0s (exec: volcanic, gracefulStop: 10s)
+
+
+running (0m01.0s), 70/70 VUs, 757 complete and 0 interrupted iterations
+seismic    [   2% ] 50 VUs  0m01.0s/1m0s
+volcanic   [   2% ] 20 VUs  0m01.0s/1m0s
+
+running (0m02.0s), 70/70 VUs, 1656 complete and 0 interrupted iterations
+seismic    [   3% ] 50 VUs  0m02.0s/1m0s
+volcanic   [   3% ] 20 VUs  0m02.0s/1m0s
+
+running (0m03.0s), 70/70 VUs, 2683 complete and 0 interrupted iterations
+seismic    [   5% ] 50 VUs  0m03.0s/1m0s
+volcanic   [   5% ] 20 VUs  0m03.0s/1m0s
+
+running (0m04.0s), 70/70 VUs, 3632 complete and 0 interrupted iterations
+seismic    [   7% ] 50 VUs  0m04.0s/1m0s
+volcanic   [   7% ] 20 VUs  0m04.0s/1m0s
+
+running (0m05.0s), 70/70 VUs, 4538 complete and 0 interrupted iterations
+seismic    [   8% ] 50 VUs  0m05.0s/1m0s
+volcanic   [   8% ] 20 VUs  0m05.0s/1m0s
+
+running (0m06.0s), 70/70 VUs, 5506 complete and 0 interrupted iterations
+seismic    [  10% ] 50 VUs  0m06.0s/1m0s
+volcanic   [  10% ] 20 VUs  0m06.0s/1m0s
+
+running (0m07.0s), 70/70 VUs, 6424 complete and 0 interrupted iterations
+seismic    [  12% ] 50 VUs  0m07.0s/1m0s
+volcanic   [  12% ] 20 VUs  0m07.0s/1m0s
+
+running (0m08.0s), 70/70 VUs, 7363 complete and 0 interrupted iterations
+seismic    [  13% ] 50 VUs  0m08.0s/1m0s
+volcanic   [  13% ] 20 VUs  0m08.0s/1m0s
+
+running (0m09.0s), 70/70 VUs, 8321 complete and 0 interrupted iterations
+seismic    [  15% ] 50 VUs  0m09.0s/1m0s
+volcanic   [  15% ] 20 VUs  0m09.0s/1m0s
+
+running (0m10.0s), 70/70 VUs, 9248 complete and 0 interrupted iterations
+seismic    [  17% ] 50 VUs  0m10.0s/1m0s
+volcanic   [  17% ] 20 VUs  0m10.0s/1m0s
+
+running (0m11.0s), 70/70 VUs, 10061 complete and 0 interrupted iterations
+seismic    [  18% ] 50 VUs  0m11.0s/1m0s
+volcanic   [  18% ] 20 VUs  0m11.0s/1m0s
+
+running (0m12.0s), 70/70 VUs, 10890 complete and 0 interrupted iterations
+seismic    [  20% ] 50 VUs  0m12.0s/1m0s
+volcanic   [  20% ] 20 VUs  0m12.0s/1m0s
+
+running (0m13.0s), 70/70 VUs, 11690 complete and 0 interrupted iterations
+seismic    [  22% ] 50 VUs  0m13.0s/1m0s
+volcanic   [  22% ] 20 VUs  0m13.0s/1m0s
+
+running (0m16.0s), 70/70 VUs, 12559 complete and 0 interrupted iterations
+seismic    [  23% ] 50 VUs  0m14.0s/1m0s
+volcanic   [  23% ] 20 VUs  0m14.0s/1m0s
+
+running (0m16.9s), 70/70 VUs, 13264 complete and 0 interrupted iterations
+seismic    [  25% ] 50 VUs  0m15.0s/1m0s
+volcanic   [  25% ] 20 VUs  0m15.0s/1m0s
+
+running (0m17.9s), 70/70 VUs, 14014 complete and 0 interrupted iterations
+seismic    [  27% ] 50 VUs  0m16.0s/1m0s
+volcanic   [  27% ] 20 VUs  0m16.0s/1m0s
+
+running (0m18.9s), 70/70 VUs, 14931 complete and 0 interrupted iterations
+seismic    [  28% ] 50 VUs  0m17.0s/1m0s
+volcanic   [  28% ] 20 VUs  0m17.0s/1m0s
+
+running (0m19.9s), 70/70 VUs, 15756 complete and 0 interrupted iterations
+seismic    [  30% ] 50 VUs  0m18.0s/1m0s
+volcanic   [  30% ] 20 VUs  0m18.0s/1m0s
+
+running (0m20.9s), 70/70 VUs, 16667 complete and 0 interrupted iterations
+seismic    [  32% ] 50 VUs  0m19.0s/1m0s
+volcanic   [  32% ] 20 VUs  0m19.0s/1m0s
+
+running (0m21.9s), 70/70 VUs, 17502 complete and 0 interrupted iterations
+seismic    [  33% ] 50 VUs  0m20.0s/1m0s
+volcanic   [  33% ] 20 VUs  0m20.0s/1m0s
+
+running (0m22.9s), 70/70 VUs, 18242 complete and 0 interrupted iterations
+seismic    [  35% ] 50 VUs  0m21.0s/1m0s
+volcanic   [  35% ] 20 VUs  0m21.0s/1m0s
+
+running (0m23.9s), 70/70 VUs, 19156 complete and 0 interrupted iterations
+seismic    [  37% ] 50 VUs  0m22.0s/1m0s
+volcanic   [  37% ] 20 VUs  0m22.0s/1m0s
+
+running (0m24.9s), 70/70 VUs, 20039 complete and 0 interrupted iterations
+seismic    [  38% ] 50 VUs  0m23.0s/1m0s
+volcanic   [  38% ] 20 VUs  0m23.0s/1m0s
+
+running (0m25.9s), 70/70 VUs, 20789 complete and 0 interrupted iterations
+seismic    [  40% ] 50 VUs  0m24.0s/1m0s
+volcanic   [  40% ] 20 VUs  0m24.0s/1m0s
+
+running (0m26.9s), 70/70 VUs, 21576 complete and 0 interrupted iterations
+seismic    [  42% ] 50 VUs  0m25.0s/1m0s
+volcanic   [  42% ] 20 VUs  0m25.0s/1m0s
+
+running (0m27.9s), 70/70 VUs, 22488 complete and 0 interrupted iterations
+seismic    [  43% ] 50 VUs  0m26.0s/1m0s
+volcanic   [  43% ] 20 VUs  0m26.0s/1m0s
+
+running (0m28.9s), 70/70 VUs, 23379 complete and 0 interrupted iterations
+seismic    [  45% ] 50 VUs  0m27.0s/1m0s
+volcanic   [  45% ] 20 VUs  0m27.0s/1m0s
+
+running (0m29.9s), 70/70 VUs, 24280 complete and 0 interrupted iterations
+seismic    [  47% ] 50 VUs  0m28.0s/1m0s
+volcanic   [  47% ] 20 VUs  0m28.0s/1m0s
+
+running (0m30.9s), 70/70 VUs, 25138 complete and 0 interrupted iterations
+seismic    [  48% ] 50 VUs  0m29.0s/1m0s
+volcanic   [  48% ] 20 VUs  0m29.0s/1m0s
+
+running (0m31.9s), 70/70 VUs, 25942 complete and 0 interrupted iterations
+seismic    [  50% ] 50 VUs  0m30.0s/1m0s
+volcanic   [  50% ] 20 VUs  0m30.0s/1m0s
+
+running (0m32.9s), 70/70 VUs, 26786 complete and 0 interrupted iterations
+seismic    [  52% ] 50 VUs  0m31.0s/1m0s
+volcanic   [  52% ] 20 VUs  0m31.0s/1m0s
+
+running (0m33.9s), 70/70 VUs, 27629 complete and 0 interrupted iterations
+seismic    [  53% ] 50 VUs  0m32.0s/1m0s
+volcanic   [  53% ] 20 VUs  0m32.0s/1m0s
+
+running (0m34.9s), 70/70 VUs, 28513 complete and 0 interrupted iterations
+seismic    [  55% ] 50 VUs  0m33.0s/1m0s
+volcanic   [  55% ] 20 VUs  0m33.0s/1m0s
+
+running (0m35.9s), 70/70 VUs, 29483 complete and 0 interrupted iterations
+seismic    [  57% ] 50 VUs  0m34.0s/1m0s
+volcanic   [  57% ] 20 VUs  0m34.0s/1m0s
+
+running (0m36.9s), 70/70 VUs, 30326 complete and 0 interrupted iterations
+seismic    [  58% ] 50 VUs  0m35.0s/1m0s
+volcanic   [  58% ] 20 VUs  0m35.0s/1m0s
+
+running (0m37.9s), 70/70 VUs, 31289 complete and 0 interrupted iterations
+seismic    [  60% ] 50 VUs  0m36.0s/1m0s
+volcanic   [  60% ] 20 VUs  0m36.0s/1m0s
+
+running (0m38.9s), 70/70 VUs, 32340 complete and 0 interrupted iterations
+seismic    [  62% ] 50 VUs  0m37.0s/1m0s
+volcanic   [  62% ] 20 VUs  0m37.0s/1m0s
+
+running (0m39.9s), 70/70 VUs, 33337 complete and 0 interrupted iterations
+seismic    [  63% ] 50 VUs  0m38.0s/1m0s
+volcanic   [  63% ] 20 VUs  0m38.0s/1m0s
+
+running (0m40.9s), 70/70 VUs, 34188 complete and 0 interrupted iterations
+seismic    [  65% ] 50 VUs  0m39.0s/1m0s
+volcanic   [  65% ] 20 VUs  0m39.0s/1m0s
+
+running (0m41.9s), 70/70 VUs, 35245 complete and 0 interrupted iterations
+seismic    [  67% ] 50 VUs  0m40.0s/1m0s
+volcanic   [  67% ] 20 VUs  0m40.0s/1m0s
+
+running (0m42.9s), 70/70 VUs, 36313 complete and 0 interrupted iterations
+seismic    [  68% ] 50 VUs  0m41.0s/1m0s
+volcanic   [  68% ] 20 VUs  0m41.0s/1m0s
+
+running (0m43.9s), 70/70 VUs, 37195 complete and 0 interrupted iterations
+seismic    [  70% ] 50 VUs  0m42.0s/1m0s
+volcanic   [  70% ] 20 VUs  0m42.0s/1m0s
+
+running (0m44.9s), 70/70 VUs, 38152 complete and 0 interrupted iterations
+seismic    [  72% ] 50 VUs  0m43.0s/1m0s
+volcanic   [  72% ] 20 VUs  0m43.0s/1m0s
+
+running (0m47.9s), 70/70 VUs, 39058 complete and 0 interrupted iterations
+seismic    [  73% ] 50 VUs  0m44.0s/1m0s
+volcanic   [  73% ] 20 VUs  0m44.0s/1m0s
+
+running (0m48.9s), 70/70 VUs, 39819 complete and 0 interrupted iterations
+seismic    [  75% ] 50 VUs  0m45.0s/1m0s
+volcanic   [  75% ] 20 VUs  0m45.0s/1m0s
+
+running (0m49.9s), 70/70 VUs, 40432 complete and 0 interrupted iterations
+seismic    [  77% ] 50 VUs  0m46.0s/1m0s
+volcanic   [  77% ] 20 VUs  0m46.0s/1m0s
+
+running (0m50.9s), 70/70 VUs, 41342 complete and 0 interrupted iterations
+seismic    [  78% ] 50 VUs  0m47.0s/1m0s
+volcanic   [  78% ] 20 VUs  0m47.0s/1m0s
+
+running (0m51.9s), 70/70 VUs, 42310 complete and 0 interrupted iterations
+seismic    [  80% ] 50 VUs  0m48.0s/1m0s
+volcanic   [  80% ] 20 VUs  0m48.0s/1m0s
+
+running (0m52.9s), 70/70 VUs, 43259 complete and 0 interrupted iterations
+seismic    [  82% ] 50 VUs  0m49.0s/1m0s
+volcanic   [  82% ] 20 VUs  0m49.0s/1m0s
+
+running (0m53.9s), 70/70 VUs, 44223 complete and 0 interrupted iterations
+seismic    [  83% ] 50 VUs  0m50.0s/1m0s
+volcanic   [  83% ] 20 VUs  0m50.0s/1m0s
+
+running (0m54.9s), 70/70 VUs, 45154 complete and 0 interrupted iterations
+seismic    [  85% ] 50 VUs  0m51.0s/1m0s
+volcanic   [  85% ] 20 VUs  0m51.0s/1m0s
+
+running (0m55.9s), 70/70 VUs, 46082 complete and 0 interrupted iterations
+seismic    [  87% ] 50 VUs  0m52.0s/1m0s
+volcanic   [  87% ] 20 VUs  0m52.0s/1m0s
+
+running (0m56.9s), 70/70 VUs, 47162 complete and 0 interrupted iterations
+seismic    [  88% ] 50 VUs  0m53.0s/1m0s
+volcanic   [  88% ] 20 VUs  0m53.0s/1m0s
+
+running (0m57.9s), 70/70 VUs, 48228 complete and 0 interrupted iterations
+seismic    [  90% ] 50 VUs  0m54.0s/1m0s
+volcanic   [  90% ] 20 VUs  0m54.0s/1m0s
+
+running (0m58.9s), 70/70 VUs, 49343 complete and 0 interrupted iterations
+seismic    [  92% ] 50 VUs  0m55.0s/1m0s
+volcanic   [  92% ] 20 VUs  0m55.0s/1m0s
+
+running (0m59.9s), 70/70 VUs, 50255 complete and 0 interrupted iterations
+seismic    [  93% ] 50 VUs  0m56.0s/1m0s
+volcanic   [  93% ] 20 VUs  0m56.0s/1m0s
+
+running (1m00.9s), 70/70 VUs, 51257 complete and 0 interrupted iterations
+seismic    [  95% ] 50 VUs  0m57.0s/1m0s
+volcanic   [  95% ] 20 VUs  0m57.0s/1m0s
+
+running (1m01.9s), 70/70 VUs, 52247 complete and 0 interrupted iterations
+seismic    [  97% ] 50 VUs  0m58.0s/1m0s
+volcanic   [  97% ] 20 VUs  0m58.0s/1m0s
+
+running (1m02.9s), 70/70 VUs, 53134 complete and 0 interrupted iterations
+seismic    [  98% ] 50 VUs  0m59.0s/1m0s
+volcanic   [  98% ] 20 VUs  0m59.0s/1m0s
+
+running (1m03.9s), 70/70 VUs, 54120 complete and 0 interrupted iterations
+seismic    [ 100% ] 50 VUs  1m00.0s/1m0s
+volcanic   [ 100% ] 20 VUs  1m00.0s/1m0s
+P2METRIC mode=load
+P2METRIC test_run_duration_ms=63941
+P2METRIC seismic_vus=50
+P2METRIC volcanic_vus=20
+P2METRIC vus_max=70
+P2METRIC api_requests=54211
+P2METRIC api_p95_ms=154.49616550000002
+P2METRIC seismic_p95_ms=152.70837304999998
+P2METRIC seismic_max_ms=1469.468363
+P2METRIC unexpected_rate=0
+P2METRIC rejected_429=NA
+
+running (1m03.9s), 00/70 VUs, 54211 complete and 0 interrupted iterations
+seismic  ✓ [ 100% ] 50 VUs  1m0s
+volcanic ✓ [ 100% ] 20 VUs  1m0s
+PASS | Sustained k6 run completed | expected=0 actual=0
+PASS | Sustained load duration is at least 60 seconds | expected=yes actual=yes
+PASS | At least 50 virtual users were active | expected=yes actual=yes
+PASS | Unexpected response rate is below 1% (429 excluded) | expected=yes actual=yes
+INFO | API requests | 54211
+INFO | API p95 latency | 154.49616550000002ms
+INFO | Controlled 429 rejections (excluded from error rate) | NA
+PASS | Aggregator still running | expected=true actual=true
+PASS | Client API still running | expected=true actual=true
+PASS | Aggregator did not restart during load | expected=0 actual=0
+PASS | Client API did not restart during load | expected=0 actual=0
+PASS | No panic in aggregator/client API logs during load | expected=0 actual=0
+
+[3] PVMBG outage, graceful stale responses, and recovery
+PASS | Field client login for probe token | expected=200 actual=200
+PASS | Field access token present | expected=yes actual=yes
+PASS | Reset PVMBG outage to off before test | expected=200 actual=200
+PASS | Healthy baseline volcanic API status | expected=200 actual=200
+PASS | Healthy baseline has no stale_since | expected=0 actual=0
+PASS | PVMBG outage enabled | expected=200 actual=200
+PASS | PVMBG mock reports outage enabled | expected=yes actual=yes
+PASS | Direct PVMBG request fails with 503 during outage | expected=503 actual=503
+PASS | Volcanic response becomes stale during outage | expected=yes actual=yes
+PASS | Outage detection takes at most 30 seconds | expected=yes actual=yes
+INFO | Outage-to-stale detection time | 4s
+PASS | Seismic remains available during outage (sample 1) | expected=200 actual=200
+PASS | Seismic does not hang (sample 1, <1s) | expected=yes actual=yes
+PASS | Volcanic request remains HTTP 200 during outage (sample 1) | expected=200 actual=200
+PASS | Volcanic response marks events stale (sample 1) | expected=yes actual=yes
+PASS | Volcanic request does not hang (sample 1, <1s) | expected=yes actual=yes
+PASS | Seismic remains available during outage (sample 2) | expected=200 actual=200
+PASS | Seismic does not hang (sample 2, <1s) | expected=yes actual=yes
+PASS | Volcanic request remains HTTP 200 during outage (sample 2) | expected=200 actual=200
+PASS | Volcanic response marks events stale (sample 2) | expected=yes actual=yes
+PASS | Volcanic request does not hang (sample 2, <1s) | expected=yes actual=yes
+PASS | Seismic remains available during outage (sample 3) | expected=200 actual=200
+PASS | Seismic does not hang (sample 3, <1s) | expected=yes actual=yes
+PASS | Volcanic request remains HTTP 200 during outage (sample 3) | expected=200 actual=200
+PASS | Volcanic response marks events stale (sample 3) | expected=yes actual=yes
+PASS | Volcanic request does not hang (sample 3, <1s) | expected=yes actual=yes
+PASS | Aggregator logged PVMBG poll failures | expected=yes actual=yes
+PASS | PVMBG outage disabled | expected=200 actual=200
+PASS | Direct PVMBG request succeeds after recovery | expected=200 actual=200
+PASS | Stale marker clears after recovery | expected=yes actual=yes
+PASS | Recovery takes at most 30 seconds | expected=yes actual=yes
+INFO | Outage-off to recovery time | 5s
+PASS | Seismic still available after recovery | expected=200 actual=200
+PASS | Aggregator was not restarted for outage recovery | expected=2026-10-10T03:53:19.059530637Z actual=2026-10-10T03:53:19.059530637Z
+PASS | Client API was not restarted for outage recovery | expected=2026-10-10T03:53:25.757200406Z actual=2026-10-10T03:53:25.757200406Z
+
+================ SUMMARY: PASS=60 FAIL=0 ================
+Evidence file: evidence/p2/verify-p2-20261010-123201.txt
+k6 logs: evidence/p2/k6-20261010-123201

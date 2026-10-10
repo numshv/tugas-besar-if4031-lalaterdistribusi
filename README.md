@@ -199,6 +199,19 @@ network, so k6 does not need to be installed. The script has two modes:
 HTTP 429 counts as a controlled rejection, not an error. If any occur, k6 reports them
 as `rejected_429`.
 
+To generate repeatable P2 evidence for HOL isolation, sustained load, and PVMBG
+outage/recovery, run the verifier from the repository root in Bash:
+
+```bash
+bash scripts/verify-p2.sh all
+```
+
+The script writes a timestamped report and k6 logs under `evidence/p2/`. It expects
+the running PVMBG mock to use a fixed 3000 ms delay, which it verifies before the
+latency runs. It does not recreate containers or change the auth token TTL; the k6
+runner renews its Field client login during long tests. Run only one scenario with
+`bash scripts/verify-p2.sh 1`, `2`, or `3`.
+
 ```bash
 loadtest() {
   docker run --rm -i --network bnpb-m1_app-net \
