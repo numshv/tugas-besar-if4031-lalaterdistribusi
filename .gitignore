@@ -1,4 +1,3 @@
-# Go
 *.exe
 *.dll
 *.so
@@ -6,23 +5,19 @@
 bin/
 /tmp/
 
-# Env & secrets
 .env
 .env.local
 *.pem
 *.key
 
-# Docker
 *.log
 
-# OS
 .DS_Store
 Thumbs.db
 
-# Editor
 .vscode/
 .idea/
 *.swp
 
-# Load test output
 scripts/results/
+infra/keys/*.pem

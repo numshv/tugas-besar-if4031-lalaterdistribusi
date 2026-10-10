@@ -1,0 +1,42 @@
+Criteria verification started: 2026-10-10T11:59:52+07:00
+
+[1] BMKG/PVMBG credentials are source-specific
+PASS | BMKG credential accepted by BMKG | expected=200 actual=200
+PASS | PVMBG credential accepted by PVMBG | expected=200 actual=200
+PASS | BMKG credential rejected by PVMBG | expected=403 actual=403
+PASS | PVMBG credential rejected by BMKG | expected=403 actual=403
+
+[2] Media scope returns Ringkasan only and server rejects raw fields
+PASS | Media client login | expected=200 actual=200
+PASS | Media access token issued | expected=non-empty actual=non-empty
+PASS | Media summary request | expected=200 actual=200
+PASS | Media response contains all summary fields | expected=1 actual=1
+PASS | Media response contains no raw fields | expected=0 actual=0
+PASS | Media explicit raw-field request rejected by server | expected=403 actual=403
+PASS | Field client login for raw-field control | expected=200 actual=200
+PASS | Field client may request raw fields (control) | expected=200 actual=200
+
+[3] Field access token expires naturally and refresh rotates credentials
+Live access token TTL: 60 seconds
+PASS | Field client login before expiry wait | expected=200 actual=200
+PASS | Initial access and refresh tokens issued | expected=both-present actual=both-present
+PASS | Initial field access token works | expected=200 actual=200
+Waiting 62 seconds for natural access-token expiry...
+PASS | Old access token rejected after natural expiry | expected=401 actual=401
+PASS | Refresh succeeds without another login | expected=200 actual=200
+PASS | Refresh returns rotated access and refresh tokens | expected=both-present actual=both-present
+PASS | New access token works | expected=200 actual=200
+PASS | Old access token remains rejected after refresh | expected=401 actual=401
+PASS | Rotated-out refresh token rejected | expected=401 actual=401
+
+[4] No runtime credentials are committed or hardcoded; example config exists
+PASS | Runtime .env is not tracked | expected=yes actual=yes
+PASS | JWT private key is not tracked | expected=yes actual=yes
+PASS | Runtime .env is git-ignored | expected=yes actual=yes
+PASS | JWT private key is git-ignored | expected=yes actual=yes
+PASS | .env.example exists and is tracked | expected=yes actual=yes
+PASS | Configured secret values absent from source and committed history | expected=0 actual=0
+PASS | .env.example secret values are placeholders | expected=0 actual=0
+
+================ SUMMARY: PASS=28 FAIL=0 ================
+Evidence file: evidence/criteria-verify-20261010-115952.txt

@@ -1,0 +1,202 @@
+package api
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/hazard"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/httpx"
+)
+
+var errAggregatorBusy = errors.New("aggregator busy")
+
+type Handler struct {
+	aggregatorBaseURL string
+	httpClient        *httpx.Client
+	log               *slog.Logger
+}
+
+func NewHandler(aggregatorBaseURL string, log *slog.Logger) *Handler {
+	return &Handler{
+		aggregatorBaseURL: aggregatorBaseURL,
+		httpClient:        httpx.NewClient(aggregatorBaseURL, 3*time.Second, log),
+		log:               log,
+	}
+}
+
+type aggregatorStatus struct {
+	PVMBG struct {
+		Healthy     bool      `json:"healthy"`
+		LastSuccess time.Time `json:"last_success"`
+	} `json:"pvmbg"`
+}
+
+func (h *Handler) ListHazardsHandler(w http.ResponseWriter, r *http.Request) {
+	scope, _ := r.Context().Value(scopeKey).(string)
+	if scope == "" {
+		httpx.Error(w, http.StatusUnauthorized, "missing_scope", "token has no valid scope")
+		return
+	}
+
+	query := r.URL.Query()
+	hazardType := query.Get("type")
+	if len(query["type"]) != 1 || (hazardType != string(hazard.TypeSeismic) && hazardType != string(hazard.TypeVolcanic)) {
+		httpx.Error(w, http.StatusBadRequest, "invalid_type", "type must be SEISMIC or VOLCANIC")
+		return
+	}
+	if len(query["limit"]) > 1 || len(query["cursor"]) > 1 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_pagination", "limit and cursor may only be specified once")
+		return
+	}
+	limit, err := hazard.ParsePageLimit(query.Get("limit"))
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid_limit", err.Error())
+		return
+	}
+	cursor := query.Get("cursor")
+	if cursor != "" {
+		if _, err := hazard.DecodeCursor(cursor); err != nil {
+			httpx.Error(w, http.StatusBadRequest, "invalid_cursor", "cursor is invalid")
+			return
+		}
+	}
+	if scope == "media" && requestsRawFields(query["fields"]) {
+		httpx.Error(w, http.StatusForbidden, "forbidden_fields", "media scope cannot request raw fields")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
+	var (
+		events     []hazard.Event
+		eventsErr  error
+		nextCursor string
+		status     *aggregatorStatus
+		statusErr  error
+	)
+
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		events, nextCursor, eventsErr = h.fetchHazards(ctx, hazardType, query.Get("since"), limit, cursor)
+	})
+
+	if hazardType == string(hazard.TypeVolcanic) {
+		wg.Go(func() {
+			status, statusErr = h.fetchStatus(ctx)
+		})
+	}
+	wg.Wait()
+
+	if eventsErr != nil {
+		h.log.ErrorContext(r.Context(), "fetch hazards failed", "error", eventsErr)
+		if errors.Is(eventsErr, errAggregatorBusy) {
+			httpx.Error(w, http.StatusTooManyRequests, "too_many_requests", "server busy, retry later")
+			return
+		}
+		httpx.Error(w, http.StatusBadGateway, "aggregator_unreachable", "failed to reach aggregator")
+		return
+	}
+	if nextCursor != "" {
+		w.Header().Set(hazard.NextCursorHeader, nextCursor)
+	}
+
+	staleSince := ""
+	if statusErr == nil && status != nil && !status.PVMBG.Healthy {
+		staleSince = status.PVMBG.LastSuccess.UTC().Format(time.RFC3339)
+	}
+
+	filtered := make([]map[string]any, 0, len(events))
+	for _, ev := range events {
+		filtered = append(filtered, filterByScope(ev, scope, staleSince))
+	}
+
+	httpx.JSON(w, http.StatusOK, filtered)
+}
+
+func (h *Handler) fetchHazards(ctx context.Context, hazardType, since string, limit int, cursor string) ([]hazard.Event, string, error) {
+	query := make(url.Values)
+	query.Set("type", hazardType)
+	if since != "" {
+		query.Set("since", since)
+	}
+	query.Set("limit", strconv.Itoa(limit))
+	if cursor != "" {
+		query.Set("cursor", cursor)
+	}
+	endpoint := h.aggregatorBaseURL + "/internal/hazards?" + query.Encode()
+
+	var events []hazard.Event
+	nextCursor, err := h.httpClient.GetJSONWithResponseHeader(ctx, endpoint, nil, &events, hazard.NextCursorHeader)
+	if err != nil {
+		var statusErr *httpx.StatusError
+		if errors.As(err, &statusErr) {
+			if statusErr.Status == http.StatusTooManyRequests {
+				return nil, "", errAggregatorBusy
+			}
+			return nil, "", fmt.Errorf("aggregator status %d", statusErr.Status)
+		}
+		return nil, "", err
+	}
+	return events, nextCursor, nil
+}
+
+func requestsRawFields(requested []string) bool {
+	rawFields := map[string]struct{}{
+		"source_ref_id": {},
+		"latitude":      {},
+		"longitude":     {},
+		"attributes":    {},
+	}
+	for _, value := range requested {
+		for _, field := range strings.Split(value, ",") {
+			if _, ok := rawFields[strings.TrimSpace(field)]; ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (h *Handler) fetchStatus(ctx context.Context) (*aggregatorStatus, error) {
+	var status aggregatorStatus
+	if err := h.httpClient.GetJSON(ctx, h.aggregatorBaseURL+"/internal/status", nil, &status); err != nil {
+		return nil, err
+	}
+	return &status, nil
+}
+
+func filterByScope(ev hazard.Event, scope string, staleSince string) map[string]any {
+	out := map[string]any{
+		"hazard_id":   ev.HazardID,
+		"source":      ev.Source,
+		"hazard_type": ev.HazardType,
+		"severity":    ev.Severity,
+		"area_name":   ev.AreaName,
+		"occurred_at": ev.OccurredAt,
+		"ingested_at": ev.IngestedAt,
+	}
+
+	if staleSince != "" && ev.HazardType == hazard.TypeVolcanic {
+		out["stale_since"] = staleSince
+	}
+
+	if scope == "media" {
+		return out
+	}
+
+	out["source_ref_id"] = ev.SourceRefID
+	out["latitude"] = ev.Latitude
+	out["longitude"] = ev.Longitude
+	out["attributes"] = ev.Attributes
+
+	return out
+}
