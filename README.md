@@ -130,7 +130,9 @@ docker compose --env-file .env -f infra/docker-compose.yml down -v   # also dele
 Unit tests: `go test ./...`
 
 **Windows.** Run the scripts from Git Bash and `export MSYS_NO_PATHCONV=1` first;
-otherwise Git Bash rewrites container paths such as `/run/keys/...`. Port 8080 is often
+otherwise Git Bash rewrites container paths such as `/run/keys/...`. The two
+`verify-*.sh` scripts are the exception: they need the variable unset, which is why
+they are started with `env -u MSYS_NO_PATHCONV` below. Port 8080 is often
 reserved by Windows (`netsh interface ipv4 show excludedportrange protocol=tcp`); if it
 is, change `CLIENT_API_HOST_PORT` in `.env`.
 
@@ -152,7 +154,7 @@ ADMIN="X-PVMBG-Admin-Token: $PVMBG_ADMIN_TOKEN"
 login() { curl -s -X POST "$AUTH/login" -H 'Content-Type: application/json' -d "{\"username\":\"$1\",\"password\":\"$2\"}"; }
 field() { sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p"; }      # read one string field from JSON
 code()  { curl -s -o /dev/null -w '%{http_code}\n' "$@"; }   # print only the HTTP status
-lag()   { docker exec bnpb-kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group "$1"; }
+lag()   { docker exec bnpb-kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group "$1"; echo; }
 ```
 
 Access tokens last 60 seconds. If a request suddenly returns 401, log in again.
@@ -199,19 +201,6 @@ network, so k6 does not need to be installed. The script has two modes:
 HTTP 429 counts as a controlled rejection, not an error. If any occur, k6 reports them
 as `rejected_429`.
 
-To generate repeatable P2 evidence for HOL isolation, sustained load, and PVMBG
-outage/recovery, run the verifier from the repository root in Bash:
-
-```bash
-bash scripts/verify-p2.sh all
-```
-
-The script writes a timestamped report and k6 logs under `evidence/p2/`. It expects
-the running PVMBG mock to use a fixed 3000 ms delay, which it verifies before the
-latency runs. It does not recreate containers or change the auth token TTL; the k6
-runner renews its Field client login during long tests. Run only one scenario with
-`bash scripts/verify-p2.sh 1`, `2`, or `3`.
-
 ```bash
 loadtest() {
   docker run --rm -i --network bnpb-m1_app-net \
@@ -233,13 +222,23 @@ loadtest latency | tee loadtest/output-latency.txt            # p(95) of {kind:s
 
 # 70 parallel connections for 60 seconds
 loadtest load | tee loadtest/output-load.txt                  # http_req_failed under 1%
+```
+
+The same checks, plus the outage scenario below, can also run in one go with
+`scripts/verify-p2.sh`. It needs the 3-second PVMBG delay set above, so run it before
+going back to `.env`. It writes a PASS/FAIL report and the k6 logs to `evidence/p2/`;
+`1`, `2` or `3` in place of `all` runs one scenario only.
+
+```bash
+env -u MSYS_NO_PATHCONV bash scripts/verify-p2.sh all   # SUMMARY: FAIL=0
 
 # Back to the values in .env
 $DC up -d --no-deps pvmbg-mock auth-service
 ```
 
 Recreating `pvmbg-mock` also resets its schema version and outage flag. Our own runs are
-in `loadtest/output-*-3.txt`, with the k6 summary export in `loadtest/result-*-3.json`.
+in `loadtest/output-*-3.txt`, with the k6 summary export in `loadtest/result-*-3.json`,
+and in `evidence/p2/`.
 
 PVMBG outage and recovery:
 
@@ -258,18 +257,15 @@ curl -s -H "Authorization: Bearer $FIELD" "$API/hazards?type=VOLCANIC" | grep -c
 
 ### Problem 3: authentication and trust
 
-Run the end-to-end acceptance checks below from the repository root after starting
-the services. The verifier uses the live auth-service TTL, waits for natural expiry,
-and writes status-only evidence (never tokens or credential values):
+`scripts/verify-criteria.sh` runs every check in this section and writes a PASS/FAIL
+report to `evidence/`, without tokens or credential values. It waits for the access
+token to expire, so it takes a little over a minute.
 
 ```bash
-bash scripts/verify-criteria.sh
+env -u MSYS_NO_PATHCONV bash scripts/verify-criteria.sh   # SUMMARY: FAIL=0
 ```
 
-It checks source-specific BMKG/PVMBG credentials, Media field classification and
-server-side rejection, Field token expiry/refresh, and the committed-secret audit.
-The expiry check takes the configured access-token TTL plus two seconds (60 seconds
-by default).
+The same checks by hand:
 
 ```bash
 # Credentials do not work across agencies
@@ -315,8 +311,12 @@ diff /tmp/before.txt /tmp/after.txt                                    # only au
 # Records from before and after the schema change sit side by side (run Problem 1 first)
 docker exec bnpb-mongodb mongosh -u "$MONGO_ROOT_USERNAME" -p "$MONGO_ROOT_PASSWORD" \
   --authenticationDatabase admin "$MONGO_DB" --quiet --eval '
-  db.hazard_events.find({hazard_type: "VOLCANIC"}, {_id: 0, source_ref_id: 1, attributes: 1})
-    .sort({occurred_at: -1}).limit(6).forEach(printjson)'
+  const v1 = {hazard_type: "VOLCANIC", "attributes.confidence_level": {$exists: false}};
+  const v2 = {hazard_type: "VOLCANIC", "attributes.confidence_level": {$exists: true}};
+  print("without confidence_level:", db.hazard_events.countDocuments(v1));
+  print("with confidence_level:   ", db.hazard_events.countDocuments(v2));
+  printjson(db.hazard_events.findOne(v1, {_id: 0, source_ref_id: 1, attributes: 1}));
+  printjson(db.hazard_events.findOne(v2, {_id: 0, source_ref_id: 1, attributes: 1}))'
 
 # Only the aggregator can reach MongoDB
 $DC exec client-api wget -qO- --timeout=3 http://mongodb:27017/   # bad address
@@ -342,19 +342,34 @@ curl -s "http://localhost:$CONSUMER_DASHBOARD_HOST_PORT/dashboard" | grep -o '"t
 docker start bnpb-consumer-notifier
 sleep 10
 lag bnpb.notifier                                    # LAG back to 0
-$DC logs --since 15s consumer-notifier | grep notification_sent
+$DC logs --since 15s consumer-notifier | grep notification_sent   # missed SIAGA/AWAS events, if any
 ```
 
-<!-- TODO: add a new consumer to the existing topic without changing the producer -->
+A new subscriber only needs a new consumer group. Below, a second copy of the regional
+consumer joins with the group `bnpb.new` while everything is running. The aggregator,
+the topic and the compose file stay as they are.
+
+```bash
+docker inspect -f '{{.Name}} {{.State.StartedAt}}' bnpb-aggregator bnpb-kafka
+$DC run -d --no-deps --name bnpb-consumer-new -e KAFKA_GROUP_ID=bnpb.new consumer-regional
+sleep 10
+lag bnpb.new                                                       # reads from the first offset, LAG 0
+docker logs bnpb-consumer-new | grep -c regional_feed_forwarded    # every event in the topic
+docker inspect -f '{{.Name}} {{.State.StartedAt}}' bnpb-aggregator bnpb-kafka   # unchanged
+
+# Clean up, so the demo can be repeated
+docker stop bnpb-consumer-new && docker rm bnpb-consumer-new
+docker exec bnpb-kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --delete --group bnpb.new
+```
 
 ### Following one correlation ID
 
 ```bash
 ID=$($DC logs consumer-notifier | grep notification_sent | tail -1 | grep -o '"correlation_id":"[^"]*"' | cut -d'"' -f4)
-$DC logs bmkg-mock pvmbg-mock aggregator consumer-dashboard consumer-notifier | grep "$ID"
+$DC logs bmkg-mock pvmbg-mock aggregator consumer-dashboard consumer-notifier consumer-regional | grep "$ID"
 ```
 
-The same ID appears in the source mock, the aggregator's outbound calls, and both consumers.
+The same ID appears in the source mock, the aggregator's outbound calls, and every consumer.
 
 ## Configuration
 
@@ -497,8 +512,11 @@ The aggregator also reads `BMKG_API_KEY`, `PVMBG_TOKEN`, the `MONGO_*` values an
 
 ### Client API
 
-`GET /hazards?type=SEISMIC|VOLCANIC[&since=<RFC 3339>][&fields=<a,b>]` with
-`Authorization: Bearer <access_token>`. Results are sorted newest first.
+`GET /hazards?type=SEISMIC|VOLCANIC[&since=<RFC 3339>][&fields=<a,b>][&limit=<n>][&cursor=<c>]`
+with `Authorization: Bearer <access_token>`. Results are sorted newest first, 100 per
+page by default (`limit` up to 500). When more results exist, the response carries an
+`X-Next-Cursor` header; pass its value as `cursor` to get the next page. When the
+concurrency limit is reached, the API answers 429 instead of queueing.
 
 | Client | Credentials | Scope | Fields returned |
 | --- | --- | --- | --- |
@@ -516,6 +534,8 @@ The aggregator also reads `BMKG_API_KEY`, `PVMBG_TOKEN`, the `MONGO_*` values an
 - `GET /dashboard` on `consumer-dashboard`: totals per severity and hazard type, and the
   latest 100 events.
 - `consumer-notifier` logs a `notification_sent` line for every `SIAGA` or `AWAS` event.
+- `GET /regional[?area=<area_name>]` on `consumer-regional`: the latest event per area,
+  as forwarded to the regional government portal.
 
 ## Project Structure
 
@@ -551,10 +571,12 @@ tugas-besar-if4031-lalaterdistribusi/
 │
 ├── scripts/
 │   ├── gen-keys.sh               # Generates the JWT signing key
-│   └── health.sh                 # Checks /health of every service
+│   ├── health.sh                 # Checks /health of every service
+│   ├── verify-p2.sh              # Problem 2 checks (latency, load, outage), uses p2-loadtest.js
+│   └── verify-criteria.sh        # Problem 3 checks (credentials, scopes, token expiry)
 │
-├── loadtest/                     # Load test configuration and results
-├── docs/                         # Report material
+├── loadtest/                     # k6 script and our load test results
+├── evidence/                     # Reports written by the verify-*.sh scripts
 ├── .env.example                  # Every configuration variable with an example value
 ├── go.mod
 └── README.md
