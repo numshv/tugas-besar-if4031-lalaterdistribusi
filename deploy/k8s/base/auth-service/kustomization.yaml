@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+configMapGenerator:
+  - name: auth-service-config
+    literals:
+      - AUTH_PORT=8084
+      - ACCESS_TOKEN_TTL_SECONDS=60
+      - REFRESH_TOKEN_TTL_SECONDS=3600
+      - JWT_PRIVATE_KEY_PATH=/run/keys/jwt_private.pem
+      - AUTH_STATE_PATH=/data/revoked-refresh-tokens.json
+      - CLIENT_MEDIA_ID=media-press
+      - CLIENT_FIELD_ID=field-basarnas
+      - CLIENT_OPS_ID=bnpb-internal-ops

@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: consumer-regional
+spec:
+  selector:
+    app: consumer-regional
+  ports:
+    - port: 8087
+      targetPort: 8087

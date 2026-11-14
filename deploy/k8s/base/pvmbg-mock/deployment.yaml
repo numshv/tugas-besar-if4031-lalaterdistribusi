@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pvmbg-mock
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pvmbg-mock
+  template:
+    metadata:
+      labels:
+        app: pvmbg-mock
+        role: mock
+    spec:
+      containers:
+        - name: pvmbg-mock
+          image: bnpb/pvmbg-mock
+          ports:
+            - containerPort: 8082
+          envFrom:
+            - configMapRef:
+                name: bnpb-common
+            - configMapRef:
+                name: pvmbg-mock-config
+          env:
+            - name: PVMBG_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: bnpb-secrets
+                  key: PVMBG_TOKEN
+            - name: PVMBG_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: bnpb-secrets
+                  key: PVMBG_ADMIN_TOKEN
+          resources:
+            requests:
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8082

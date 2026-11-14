@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aggregator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aggregator
+  template:
+    metadata:
+      labels:
+        app: aggregator
+        role: aggregator
+    spec:
+      containers:
+        - name: aggregator
+          image: bnpb/aggregator
+          ports:
+            - containerPort: 8083
+          envFrom:
+            - configMapRef:
+                name: bnpb-common
+            - configMapRef:
+                name: aggregator-config
+          env:
+            - name: BMKG_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bnpb-secrets
+                  key: BMKG_API_KEY
+            - name: PVMBG_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: bnpb-secrets
+                  key: PVMBG_TOKEN
+            - name: MONGO_APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bnpb-secrets
+                  key: MONGO_APP_PASSWORD
+            - name: MONGO_URI
+              value: mongodb://$(MONGO_APP_USERNAME):$(MONGO_APP_PASSWORD)@mongodb:27017/$(MONGO_DB)?authSource=$(MONGO_DB)
+          resources:
+            requests:
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8083
