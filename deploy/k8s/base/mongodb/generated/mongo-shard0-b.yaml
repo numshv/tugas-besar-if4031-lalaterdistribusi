@@ -1,0 +1,139 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo-shard0-b
+  labels:
+    app: mongo-shard
+    bnpb/mongo-unit: shard0-b
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    bnpb/mongo-unit: shard0-b
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: 27017
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo-shard0-b
+  labels:
+    app: mongo-shard
+    bnpb/mongo-member: "true"
+    bnpb/mongo-unit: shard0-b
+spec:
+  serviceName: mongo-shard0-b
+  replicas: 1
+  selector:
+    matchLabels:
+      bnpb/mongo-unit: shard0-b
+  template:
+    metadata:
+      labels:
+        app: mongo-shard
+        role: store
+        bnpb/mongo-member: "true"
+        bnpb/mongo-unit: shard0-b
+        bnpb/replset: shard-0
+        bnpb/slot: b
+    spec:
+      nodeSelector:
+        bnpb/slot: b
+      terminationGracePeriodSeconds: 30
+      initContainers:
+        - name: keyfile
+          image: mongo:7.0
+          command:
+            - sh
+            - -c
+            - cp /keyfile-src/mongo-keyfile /keyfile/mongo-keyfile && chown 999:999 /keyfile/mongo-keyfile && chmod 400 /keyfile/mongo-keyfile
+          volumeMounts:
+            - name: keyfile-src
+              mountPath: /keyfile-src
+              readOnly: true
+            - name: keyfile
+              mountPath: /keyfile
+          resources:
+            requests:
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+      containers:
+        - name: mongod
+          image: mongo:7.0
+          args:
+            - mongod
+            - --config
+            - /etc/mongo/mongod.conf
+            - --shardsvr
+            - --replSet
+            - shard-0
+            - --port
+            - "27017"
+            - --bind_ip_all
+            - --keyFile
+            - /keyfile/mongo-keyfile
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: mongodb-config
+                  key: MONGO_INITDB_ROOT_USERNAME
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bnpb-secrets
+                  key: MONGO_ROOT_PASSWORD
+          ports:
+            - name: mongo
+              containerPort: 27017
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+            - name: keyfile
+              mountPath: /keyfile
+              readOnly: true
+            - name: conf
+              mountPath: /etc/mongo
+              readOnly: true
+          resources:
+            requests:
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+          readinessProbe:
+            exec:
+              command: ["bash", "-c", "echo > /dev/tcp/127.0.0.1/27017"]
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            exec:
+              command: ["bash", "-c", "echo > /dev/tcp/127.0.0.1/27017"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+      volumes:
+        - name: keyfile-src
+          secret:
+            secretName: mongo-keyfile
+            defaultMode: 0400
+        - name: keyfile
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        - name: conf
+          configMap:
+            name: mongod-conf
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 5Gi

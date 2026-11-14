@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - mongo-shard0-a.yaml
+  - mongo-shard0-b.yaml
+  - mongo-shard0-c.yaml
+  - mongo-shard1-b.yaml
+  - mongo-shard1-c.yaml
+  - mongo-shard1-d.yaml
+  - mongo-shard2-c.yaml
+  - mongo-shard2-a.yaml
+  - mongo-shard2-d.yaml
+  - mongo-shard3-d.yaml
+  - mongo-shard3-a.yaml
+  - mongo-shard3-b.yaml
+  - mongo-cfg-a.yaml
+  - mongo-cfg-b.yaml
+  - mongo-cfg-c.yaml

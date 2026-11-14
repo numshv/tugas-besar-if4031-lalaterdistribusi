@@ -1,15 +1,45 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: mongodb-only-aggregator
+  name: mongos-only-aggregator
 spec:
   podSelector:
     matchLabels:
-      app: mongodb
+      app: mongos
   policyTypes:
     - Ingress
   ingress:
     - from:
+        - podSelector:
+            matchLabels:
+              app: aggregator
+        - podSelector:
+            matchLabels:
+              app: mongo-init
+      ports:
+        - port: 27017
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mongo-members-internal
+spec:
+  podSelector:
+    matchLabels:
+      bnpb/mongo-member: "true"
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              bnpb/mongo-member: "true"
+        - podSelector:
+            matchLabels:
+              app: mongos
+        - podSelector:
+            matchLabels:
+              app: mongo-init
         - podSelector:
             matchLabels:
               app: aggregator

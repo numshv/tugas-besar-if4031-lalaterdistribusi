@@ -77,7 +77,7 @@ services:
       MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD}
     volumes:
       - mongo-data:/data/db
-      - ../deploy/k8s/base/mongodb/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+      - ./store/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
     networks: [store-net]
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand({ping:1}).ok"]

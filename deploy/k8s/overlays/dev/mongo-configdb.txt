@@ -1,0 +1,1 @@
+cfg/mongo-cfg-a:27017

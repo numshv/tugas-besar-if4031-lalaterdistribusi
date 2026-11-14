@@ -136,6 +136,50 @@ they are started with `env -u MSYS_NO_PATHCONV` below. Port 8080 is often
 reserved by Windows (`netsh interface ipv4 show excludedportrange protocol=tcp`); if it
 is, change `CLIENT_API_HOST_PORT` in `.env`.
 
+### MongoDB sharded cluster (Kubernetes)
+
+HazardEvents live in a MongoDB sharded cluster: 4 shards × 3 copies spread over 4 node
+slots, so no node holds all data and every shard survives the loss of one node.
+
+| | slot a | slot b | slot c | slot d |
+|---|---|---|---|---|
+| shard-0 | primary | replica | replica | – |
+| shard-1 | – | primary | replica | replica |
+| shard-2 | replica | – | primary | replica |
+| shard-3 | replica | replica | – | primary |
+| config server (`cfg`) | ✓ | ✓ | ✓ | – |
+| mongos | ✓ | ✓ | ✓ | ✓ |
+
+The aggregator still connects to `mongodb:27017`, which now points to the mongos on each
+node. NetworkPolicies only let the aggregator (and the `mongo-init` Job) reach mongos and
+the shard members. The `dev` overlay keeps the same 4 slots but runs one member per shard
+and one config server, with less memory, so it fits a laptop k3d cluster.
+
+```bash
+# Once per cluster: give every node a slot (dev: k3d cluster create bnpb-dev --agents 3)
+scripts/label-nodes.sh <node-a> <node-b> <node-c> <node-d>
+
+# Once per cluster: secrets (MONGO_ROOT_PASSWORD, MONGO_APP_PASSWORD, MONGO_MONITOR_PASSWORD live in bnpb-secrets)
+scripts/gen-mongo-keyfile.sh
+kubectl -n sistem-informasi-kebencanaan-bnpb create secret generic mongo-keyfile \
+  --from-file=mongo-keyfile=infra/keys/mongo-keyfile
+
+# Deploy (dev or demo)
+kubectl apply -k deploy/k8s/overlays/dev
+kubectl -n sistem-informasi-kebencanaan-bnpb logs -f job/mongo-init
+```
+
+The `mongo-init` Job is idempotent: it only runs `replSetInitiate` when every member of a
+replica set is reachable and none is initialized, so a member whose disk was wiped just
+rejoins and resyncs. It then adds the shards, creates the `bnpb_app` and `bnpb_monitor`
+users, shards `bnpb.hazard_events` on `{_id: "hashed"}`, creates the indexes and seeds
+`volcano_reference`. If an older cluster has the single-member `mongodb` headless Service,
+delete it before applying (`clusterIP` cannot change in place).
+
+To change the layout, edit the table at the top of `scripts/gen-mongo-manifests.sh` and
+run it; it rewrites `deploy/k8s/base/mongodb/generated/`, the topology files and the
+dev overlay's delete patches.
+
 ## Test Scenarios
 
 Run these from the repository root in bash. The first block loads `.env` and defines

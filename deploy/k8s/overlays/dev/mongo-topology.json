@@ -1,0 +1,9 @@
+{
+  "config": {"name": "cfg", "members": [{"host": "mongo-cfg-a:27017", "slot": "a", "priority": 2}]},
+  "shards": [
+    {"name": "shard-0", "members": [{"host": "mongo-shard0-a:27017", "slot": "a", "priority": 2}]},
+    {"name": "shard-1", "members": [{"host": "mongo-shard1-b:27017", "slot": "b", "priority": 2}]},
+    {"name": "shard-2", "members": [{"host": "mongo-shard2-c:27017", "slot": "c", "priority": 2}]},
+    {"name": "shard-3", "members": [{"host": "mongo-shard3-d:27017", "slot": "d", "priority": 2}]}
+  ]
+}

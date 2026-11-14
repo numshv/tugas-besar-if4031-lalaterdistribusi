@@ -1,0 +1,1 @@
+cfg/mongo-cfg-a:27017,mongo-cfg-b:27017,mongo-cfg-c:27017

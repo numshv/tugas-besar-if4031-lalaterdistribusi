@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - path: mongo-shard0-b-statefulset.yaml
+  - path: mongo-shard0-b-service.yaml
+  - path: mongo-shard0-c-statefulset.yaml
+  - path: mongo-shard0-c-service.yaml
+  - path: mongo-shard1-c-statefulset.yaml
+  - path: mongo-shard1-c-service.yaml
+  - path: mongo-shard1-d-statefulset.yaml
+  - path: mongo-shard1-d-service.yaml
+  - path: mongo-shard2-a-statefulset.yaml
+  - path: mongo-shard2-a-service.yaml
+  - path: mongo-shard2-d-statefulset.yaml
+  - path: mongo-shard2-d-service.yaml
+  - path: mongo-shard3-a-statefulset.yaml
+  - path: mongo-shard3-a-service.yaml
+  - path: mongo-shard3-b-statefulset.yaml
+  - path: mongo-shard3-b-service.yaml
+  - path: mongo-cfg-b-statefulset.yaml
+  - path: mongo-cfg-b-service.yaml
+  - path: mongo-cfg-c-statefulset.yaml
+  - path: mongo-cfg-c-service.yaml

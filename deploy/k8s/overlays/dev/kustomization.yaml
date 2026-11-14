@@ -19,3 +19,37 @@ images:
     newTag: dev
   - name: bnpb/consumer-regional
     newTag: dev
+components:
+  - mongo-delete-replicas
+patches:
+  - target:
+      kind: StatefulSet
+      labelSelector: bnpb/mongo-member=true
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            memory: 256Mi
+          limits:
+            memory: 512Mi
+      - op: replace
+        path: /spec/template/spec/initContainers/0/resources
+        value:
+          requests:
+            memory: 256Mi
+          limits:
+            memory: 512Mi
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
+        value: 2Gi
+configMapGenerator:
+  - name: mongo-topology
+    behavior: replace
+    files:
+      - topology.json=mongo-topology.json
+      - MONGO_CONFIGDB=mongo-configdb.txt
+  - name: mongod-conf
+    behavior: replace
+    files:
+      - mongod.conf
