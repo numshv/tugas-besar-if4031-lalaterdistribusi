@@ -19,7 +19,7 @@ spec:
               - matchExpressions:
                   - key: bnpb/slot
                     operator: Exists
-      terminationGracePeriodSeconds: 15
+      terminationGracePeriodSeconds: 30
       initContainers:
         - name: keyfile
           image: mongo:7.0

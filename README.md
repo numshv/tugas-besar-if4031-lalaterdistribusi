@@ -169,11 +169,13 @@ kubectl apply -k deploy/k8s/overlays/dev
 kubectl -n sistem-informasi-kebencanaan-bnpb logs -f job/mongo-init
 ```
 
-The `mongo-init` Job is idempotent: it only runs `replSetInitiate` when every member of a
-replica set is reachable and none is initialized, so a member whose disk was wiped just
-rejoins and resyncs. It then adds the shards, creates the `bnpb_app` and `bnpb_monitor`
-users, shards `bnpb.hazard_events` on `{_id: "hashed"}`, creates the indexes and seeds
-`volcano_reference`. If an older cluster has the single-member `mongodb` headless Service,
+Every member starts empty. The highest-priority member of each replica set
+(`mongod-start.sh` + `bootstrap.js`) runs `replSetInitiate` and creates the root user through
+the localhost exception, but only when every peer is reachable and none already belongs to a
+replica set, so a member whose disk was wiped just rejoins and resyncs. The `mongo-init` Job
+is idempotent: it waits for the primaries, adds the shards, creates the `bnpb_app` and
+`bnpb_monitor` users, shards `bnpb.hazard_events` on `{_id: "hashed"}`, creates the indexes
+and seeds `volcano_reference`. If an older cluster has the single-member `mongodb` headless Service,
 delete it before applying (`clusterIP` cannot change in place).
 
 To change the layout, edit the table at the top of `scripts/gen-mongo-manifests.sh` and

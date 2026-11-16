@@ -35,7 +35,7 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   name: mongodb-config
-                  key: MONGO_INITDB_ROOT_USERNAME
+                  key: MONGO_ROOT_USERNAME
             - name: MONGO_APP_USERNAME
               valueFrom:
                 configMapKeyRef:

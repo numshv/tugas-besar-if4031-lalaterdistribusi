@@ -5,9 +5,6 @@ const rootUser = env.MONGO_ROOT_USERNAME;
 const rootPassword = env.MONGO_ROOT_PASSWORD;
 const deadline = Date.now() + Number(env.INIT_TIMEOUT_SECONDS || 600) * 1000;
 
-const NOT_YET_INITIALIZED = 94;
-const ALREADY_INITIALIZED = 23;
-
 function log(msg, fields) {
   print(JSON.stringify(Object.assign({ time: new Date().toISOString(), level: "info", service: "mongo-init", msg }, fields || {})));
 }
@@ -24,7 +21,8 @@ function uri(host) {
 function withAdmin(host, fn) {
   const conn = new Mongo(uri(host));
   try {
-    return fn(conn.getDB("admin"));
+    const result = fn(conn.getDB("admin"));
+    return result;
   } finally {
     conn.close();
   }
@@ -32,7 +30,8 @@ function withAdmin(host, fn) {
 
 function cmd(db, doc) {
   try {
-    return db.runCommand(doc);
+    const res = db.runCommand(doc);
+    return res;
   } catch (e) {
     if (e && e.code !== undefined) return { ok: 0, code: e.code, codeName: e.codeName, errmsg: errText(e) };
     throw e;
@@ -57,15 +56,6 @@ function until(what, fn) {
   }
 }
 
-function replState(host) {
-  return withAdmin(host, (admin) => {
-    const res = cmd(admin, { replSetGetStatus: 1 });
-    if (res.ok === 1) return "initialized";
-    if (res.code === NOT_YET_INITIALIZED) return "uninitialized";
-    throw new Error(`replSetGetStatus ${host}: ${res.codeName || res.code}`);
-  });
-}
-
 function findPrimary(rs) {
   for (const m of rs.members) {
     try {
@@ -78,34 +68,7 @@ function findPrimary(rs) {
   return null;
 }
 
-function ensureReplSet(rs, isConfig) {
-  const decision = until(`state of ${rs.name}`, () => {
-    let reachable = 0;
-    for (const m of rs.members) {
-      try {
-        if (replState(m.host) === "initialized") return "skip";
-        reachable++;
-      } catch (e) {
-        log("member unreachable", { replset: rs.name, host: m.host, error: errText(e) });
-      }
-    }
-    return reachable === rs.members.length ? "initiate" : null;
-  });
-
-  if (decision === "initiate") {
-    const preferred = rs.members.reduce((a, b) => (b.priority > a.priority ? b : a));
-    const config = {
-      _id: rs.name,
-      members: rs.members.map((m, i) => ({ _id: i, host: m.host, priority: m.priority })),
-    };
-    if (isConfig) config.configsvr = true;
-    const res = withAdmin(preferred.host, (admin) => cmd(admin, { replSetInitiate: config }));
-    if (res.ok !== 1 && res.code !== ALREADY_INITIALIZED) must(res, `replSetInitiate ${rs.name}`);
-    log("replica set initiated", { replset: rs.name, via: preferred.host });
-  } else {
-    log("replica set already initialized", { replset: rs.name });
-  }
-
+function waitPrimary(rs) {
   const primary = until(`primary of ${rs.name}`, () => findPrimary(rs));
   log("primary ready", { replset: rs.name, primary });
   return primary;
@@ -201,9 +164,9 @@ function ensureVolcanoReference(client) {
 }
 
 function main() {
-  ensureReplSet(topology.config, true);
+  waitPrimary(topology.config);
   for (const rs of topology.shards) {
-    ensureReplSet(rs, false);
+    waitPrimary(rs);
     until(`monitor user on ${rs.name}`, () => {
       const primary = findPrimary(rs);
       if (!primary) return false;
