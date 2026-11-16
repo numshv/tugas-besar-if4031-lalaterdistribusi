@@ -37,16 +37,28 @@ type Store interface {
 	LoadCheckpoint(ctx context.Context, source hazard.Source) (cursor string, epoch int64, err error)
 	Get(ctx context.Context, hazardID string) (hazard.Event, error)
 	ListLatest(ctx context.Context, q LatestQuery) (LatestPage, error)
+	SourceRefIDs(ctx context.Context, source hazard.Source, includeRetracted bool) (RefIDs, error)
 	ListByType(ctx context.Context, hazardType hazard.Type, since time.Time, cursor *hazard.Cursor, limit int) ([]hazard.Event, bool, error)
 }
 
 type LatestQuery struct {
-	Type      hazard.Type
-	Source    hazard.Source
-	Since     time.Time
-	Ascending bool
-	Limit     int
-	Cursor    string
+	Type             hazard.Type
+	Source           hazard.Source
+	Since            time.Time
+	Ascending        bool
+	Limit            int
+	Cursor           string
+	IncludeRetracted bool
+}
+
+type RefIDs struct {
+	IDs              []string
+	Partial          bool
+	UnavailableUnits []string
+}
+
+type Locator interface {
+	ShardOf(ctx context.Context, hazardID string) (string, error)
 }
 
 type LatestPage struct {
@@ -113,7 +125,7 @@ func filterKey(q LatestQuery) string {
 	if !q.Since.IsZero() {
 		since = q.Since.UnixMilli()
 	}
-	sum := sha256.Sum256(fmt.Appendf(nil, "%s|%s|%d|%t", q.Type, q.Source, since, q.Ascending))
+	sum := sha256.Sum256(fmt.Appendf(nil, "%s|%s|%d|%t|%t", q.Type, q.Source, since, q.Ascending, q.IncludeRetracted))
 	return hex.EncodeToString(sum[:4])
 }
 

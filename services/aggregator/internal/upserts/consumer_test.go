@@ -139,7 +139,7 @@ func TestRetractUpdatesExistingEvent(t *testing.T) {
 	if h := hazard.EventHeaders(last); h[hazard.HeaderOp] != hazard.OpRetract || h[hazard.HeaderVersion] != "2" {
 		t.Fatalf("headers = %v", h)
 	}
-	page, _ := st.ListLatest(ctx, store.LatestQuery{Limit: 10})
+	page, _ := st.ListLatest(ctx, store.LatestQuery{Limit: 10, IncludeRetracted: true})
 	if len(page.Items) != 1 {
 		t.Fatalf("retract must not create a new event, got %d", len(page.Items))
 	}

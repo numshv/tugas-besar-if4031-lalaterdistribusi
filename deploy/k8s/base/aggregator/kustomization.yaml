@@ -18,3 +18,4 @@ configMapGenerator:
       - STORE_PARTIAL_MODE=literal
       - KAFKA_UPSERTS_TOPIC=bnpb.hazard-upserts.v1
       - KAFKA_UPSERTS_GROUP=bnpb.aggregator.hazard-upserts
+      - AUDIT_INCLUDE_RETRACTED=false

@@ -16,13 +16,15 @@ type Handler struct {
 	store  store.Store
 	poller *poller.Poller
 	log    *slog.Logger
+	latest *latestCache
 }
 
 func New(s store.Store, p *poller.Poller, log *slog.Logger, maxConcurrency int) http.Handler {
-	h := &Handler{store: s, poller: p, log: log}
+	h := &Handler{store: s, poller: p, log: log, latest: newLatestCache()}
 
 	limited := http.NewServeMux()
 	limited.HandleFunc("GET /internal/hazards", h.listHazards)
+	limited.HandleFunc("GET /internal/hazards/latest", h.listLatest)
 	limited.HandleFunc("GET /internal/status", h.status)
 
 	root := http.NewServeMux()

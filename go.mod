@@ -8,6 +8,7 @@ require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/segmentio/kafka-go v0.4.51
 	go.mongodb.org/mongo-driver v1.17.10
+	golang.org/x/sync v0.16.0
 	k8s.io/api v0.34.1
 	k8s.io/apimachinery v0.34.1
 	k8s.io/client-go v0.34.1
@@ -52,7 +53,6 @@ require (
 	golang.org/x/crypto v0.41.0 // indirect
 	golang.org/x/net v0.43.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
-	golang.org/x/sync v0.16.0 // indirect
 	golang.org/x/sys v0.35.0 // indirect
 	golang.org/x/term v0.34.0 // indirect
 	golang.org/x/text v0.28.0 // indirect

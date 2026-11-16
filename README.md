@@ -248,6 +248,44 @@ enc, err := hazard.EncodeUpsert(hazard.UpsertMessage{
   retractions are not mistaken for duplicates.
 - `hazard_store_latency_seconds{source}` measures `produced_at` → stored (P4 p95).
 
+### Latest events across every shard
+
+`GET /hazards` without `type` returns the newest events of every hazard type, newest
+`ingested_at` first, read across all shards. The body stays a JSON array like M1; paging uses
+`X-Next-Cursor`, and when part of the storage is unreachable the response carries
+`X-Partial: true` and `X-Unavailable-Units`. Retracted events are hidden. The aggregator
+caches the first page for 1 second and collapses concurrent misses into one query, so the
+load test target `GET /hazards?limit=50` does not hammer MongoDB.
+
+```bash
+curl -s -i -H "Authorization: Bearer $FIELD" "http://localhost:8080/hazards?limit=50"
+```
+
+### Audit API
+
+Served by the aggregator under `/internal/audit/*` (the ingress routes it there) and protected
+by `Authorization: Bearer <token>`, where the token is one of the comma-separated values in
+`AUDIT_TOKENS` (Secret `bnpb-secrets`). Without any token configured the endpoints answer 503
+`audit_not_configured`; at most 4 audit requests run at once, the rest get 429. Errors use
+`{"error":{"code":"...","message":"..."}}`; storage problems answer 503 or `partial: true`,
+never 500.
+
+| Endpoint | What it returns |
+|---|---|
+| `GET /internal/audit/events?source&since&limit&cursor` | Every HazardEvent field, ascending by `ingested_at` then `hazard_id`; `since` filters `ingested_at >=`; `limit` 1–1000 (default 100); `next_cursor` is `null` on the last page |
+| `GET /internal/audit/checksum?source` | `count` and SHA-256 over the `source_ref_id` values, sorted by byte, joined by `\n`, no trailing newline, lowercase hex. Without `source` it covers every source (`"source": null`) |
+| `GET /internal/audit/location?hazard_id` | The shard that holds the event (asked from mongos) and its reachable copies: `{node, unit, role}`; 404 if the event does not exist |
+
+`AUDIT_INCLUDE_RETRACTED` (default `false`) decides whether retracted events count in
+`/events` and `/checksum`; both endpoints always follow the same rule.
+
+```bash
+AUDIT=change-me-audit
+curl -s -H "Authorization: Bearer $AUDIT" "http://localhost:8083/internal/audit/checksum?source=BMKG"
+curl -s -H "Authorization: Bearer $AUDIT" "http://localhost:8083/internal/audit/events?limit=5"
+curl -s -H "Authorization: Bearer $AUDIT" "http://localhost:8083/internal/audit/location?hazard_id=<id>"
+```
+
 ## Test Scenarios
 
 Run these from the repository root in bash. The first block loads `.env` and defines

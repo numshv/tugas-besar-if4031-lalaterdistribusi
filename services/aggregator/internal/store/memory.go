@@ -156,6 +156,9 @@ func (m *Memory) ListLatest(_ context.Context, q LatestQuery) (LatestPage, error
 		if !q.Since.IsZero() && e.IngestedAt.Before(since) {
 			continue
 		}
+		if e.Retracted && !q.IncludeRetracted {
+			continue
+		}
 		matched = append(matched, copyEvent(e))
 	}
 	m.mu.Unlock()
@@ -189,6 +192,22 @@ func (m *Memory) ListLatest(_ context.Context, q LatestQuery) (LatestPage, error
 		page.NextCursor = encodeLatestCursor(q, page.Items[q.Limit-1])
 	}
 	return page, nil
+}
+
+func (m *Memory) SourceRefIDs(_ context.Context, source hazard.Source, includeRetracted bool) (RefIDs, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ids := []string{}
+	for _, e := range m.events {
+		if source != "" && e.Source != source {
+			continue
+		}
+		if e.Retracted && !includeRetracted {
+			continue
+		}
+		ids = append(ids, e.SourceRefID)
+	}
+	return RefIDs{IDs: ids, UnavailableUnits: []string{}}, nil
 }
 
 func (m *Memory) ListByType(_ context.Context, hazardType hazard.Type, since time.Time, cursor *hazard.Cursor, limit int) ([]hazard.Event, bool, error) {

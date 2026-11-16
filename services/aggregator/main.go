@@ -18,6 +18,7 @@ import (
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/httpx"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/logging"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/api"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/audit"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/mapper"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/poller"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/publisher"
@@ -71,11 +72,13 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("init volcano resolver: %w", err)
 	}
 
+	var members audit.Members
 	if cfg.Topology != "" {
-		units, err := startStoreMonitor(ctx, cfg, mongoStore, log)
+		units, monitor, err := startStoreMonitor(ctx, cfg, mongoStore, log)
 		if err != nil {
 			return fmt.Errorf("start store monitor: %w", err)
 		}
+		members = monitor
 		defer func() {
 			closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -145,17 +148,27 @@ func run(log *slog.Logger) error {
 		}
 	}()
 
+	auditAPI := audit.New(mongoStore, mongoStore, members, audit.Config{
+		Tokens:           cfg.AuditTokens,
+		IncludeRetracted: cfg.AuditIncludeRetracted,
+		PartialMode:      cfg.PartialMode,
+	}, log.With("component", "audit"))
+	if len(cfg.AuditTokens) == 0 {
+		log.Warn("AUDIT_TOKENS not set, audit API answers 503 until a token is configured")
+	}
+
 	handler := api.New(mongoStore, p, log, cfg.MaxConcurrency)
 	root := http.NewServeMux()
 	root.Handle("GET /metrics", promhttp.Handler())
+	root.Handle("/internal/audit/", httpx.Middleware(log)(auditAPI))
 	root.Handle("/", httpx.Middleware(log)(handler))
 	return httpx.ListenAndServe(ctx, ":"+cfg.Port, root, log)
 }
 
-func startStoreMonitor(ctx context.Context, cfg config, s *store.MongoStore, log *slog.Logger) (*storemon.MongoUnits, error) {
+func startStoreMonitor(ctx context.Context, cfg config, s *store.MongoStore, log *slog.Logger) (*storemon.MongoUnits, *storemon.Monitor, error) {
 	topology, err := storemon.ParseTopology(cfg.Topology)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	units := storemon.NewMongoUnits(cfg.MonitorUser, cfg.MonitorPassword, cfg.MongoDB)
 	nodes := storemon.NodesFromEnvironment(ctx, cfg.Namespace, log)
@@ -169,7 +182,7 @@ func startStoreMonitor(ctx context.Context, cfg config, s *store.MongoStore, log
 
 	s.WithHealth(monitor, cfg.PartialMode)
 	log.Info("storage health monitor started", "units", len(topology.Units()), "partial_mode", cfg.PartialMode)
-	return units, nil
+	return units, monitor, nil
 }
 
 func persistAndPublish(ctx context.Context, s store.Store, pub publisher.Publisher, retryQ *publishRetryQueue, events []hazard.Event, mapErrs []error, log *slog.Logger) error {
@@ -215,6 +228,9 @@ type config struct {
 	PartialMode     store.PartialMode
 	Namespace       string
 
+	AuditTokens           []string
+	AuditIncludeRetracted bool
+
 	KafkaBrokers []string
 	KafkaTopic   string
 	UpsertsTopic string
@@ -223,25 +239,27 @@ type config struct {
 
 func loadConfig() (config, error) {
 	cfg := config{
-		Port:               envString("AGGREGATOR_PORT", "8083"),
-		PollInterval:       envSeconds("POLL_INTERVAL_SECONDS", 3),
-		HTTPTimeout:        envMillis("HTTP_CLIENT_TIMEOUT_MS", 5000),
-		MaxConcurrency:     envInt("AGG_MAX_CONCURRENCY", 64),
-		UnknownFieldPolicy: envString("UNKNOWN_FIELD_POLICY", "passthrough"),
-		BMKGBaseURL:        os.Getenv("BMKG_BASE_URL"),
-		BMKGAPIKey:         os.Getenv("BMKG_API_KEY"),
-		PVMBGBaseURL:       os.Getenv("PVMBG_BASE_URL"),
-		PVMBGToken:         os.Getenv("PVMBG_TOKEN"),
-		MongoURI:           os.Getenv("MONGO_URI"),
-		MongoDB:            os.Getenv("MONGO_DB"),
-		KafkaBrokers:       strings.Split(os.Getenv("KAFKA_BROKERS"), ","),
-		KafkaTopic:         os.Getenv("KAFKA_TOPIC"),
-		UpsertsTopic:       os.Getenv("KAFKA_UPSERTS_TOPIC"),
-		UpsertsGroup:       envString("KAFKA_UPSERTS_GROUP", "bnpb.aggregator.hazard-upserts"),
-		Topology:           os.Getenv("TOPOLOGY_JSON"),
-		MonitorUser:        os.Getenv("MONGO_MONITOR_USERNAME"),
-		MonitorPassword:    os.Getenv("MONGO_MONITOR_PASSWORD"),
-		Namespace:          os.Getenv("POD_NAMESPACE"),
+		Port:                  envString("AGGREGATOR_PORT", "8083"),
+		PollInterval:          envSeconds("POLL_INTERVAL_SECONDS", 3),
+		HTTPTimeout:           envMillis("HTTP_CLIENT_TIMEOUT_MS", 5000),
+		MaxConcurrency:        envInt("AGG_MAX_CONCURRENCY", 64),
+		UnknownFieldPolicy:    envString("UNKNOWN_FIELD_POLICY", "passthrough"),
+		BMKGBaseURL:           os.Getenv("BMKG_BASE_URL"),
+		BMKGAPIKey:            os.Getenv("BMKG_API_KEY"),
+		PVMBGBaseURL:          os.Getenv("PVMBG_BASE_URL"),
+		PVMBGToken:            os.Getenv("PVMBG_TOKEN"),
+		MongoURI:              os.Getenv("MONGO_URI"),
+		MongoDB:               os.Getenv("MONGO_DB"),
+		KafkaBrokers:          strings.Split(os.Getenv("KAFKA_BROKERS"), ","),
+		KafkaTopic:            os.Getenv("KAFKA_TOPIC"),
+		UpsertsTopic:          os.Getenv("KAFKA_UPSERTS_TOPIC"),
+		UpsertsGroup:          envString("KAFKA_UPSERTS_GROUP", "bnpb.aggregator.hazard-upserts"),
+		Topology:              os.Getenv("TOPOLOGY_JSON"),
+		MonitorUser:           os.Getenv("MONGO_MONITOR_USERNAME"),
+		MonitorPassword:       os.Getenv("MONGO_MONITOR_PASSWORD"),
+		Namespace:             os.Getenv("POD_NAMESPACE"),
+		AuditTokens:           audit.ParseTokens(os.Getenv("AUDIT_TOKENS")),
+		AuditIncludeRetracted: os.Getenv("AUDIT_INCLUDE_RETRACTED") == "true",
 	}
 	mode, err := store.ParsePartialMode(os.Getenv("STORE_PARTIAL_MODE"))
 	if err != nil {
