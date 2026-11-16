@@ -134,7 +134,13 @@ function ensureHazardEvents(client) {
   col.createIndex({ hazard_type: 1, occurred_at: -1, _id: -1 }, { name: "hazard_type_occurred_at_id_desc" });
   col.createIndex({ hazard_type: 1, occurred_at: 1 }, { name: "hazard_type_occurred_at_asc" });
   col.createIndex({ source: 1, source_ref_id: 1 }, { name: "source_source_ref_id" });
+  col.createIndex({ source: 1, ingested_at: 1, _id: 1 }, { name: "source_ingested_at_id_asc" });
   log("indexes ready", { ns });
+
+  if (!store.getCollectionNames().includes("fences")) {
+    store.createCollection("fences");
+    log("collection created", { ns: `${dbName}.fences` });
+  }
 }
 
 function ensureVolcanoReference(client) {

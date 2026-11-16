@@ -182,6 +182,19 @@ To change the layout, edit the table at the top of `scripts/gen-mongo-manifests.
 run it; it rewrites `deploy/k8s/base/mongodb/generated/`, the topology files and the
 dev overlay's delete patches.
 
+For local work without Kubernetes, `scripts/dev-mongo-sharded.sh up` starts a small sharded
+cluster in Docker (one config server, two single-member shards, mongos on
+`127.0.0.1:27017`) using the same bootstrap and init scripts; `down` removes it. The store
+contract tests run against the in-memory store on every `go test`, and also against Mongo
+when `STORE_TEST_MONGO_URI` is set:
+
+```bash
+scripts/dev-mongo-sharded.sh up
+STORE_TEST_MONGO_URI='mongodb://root:devroot@127.0.0.1:27017/?authSource=admin' \
+  go test ./services/aggregator/internal/store/ -race -count=1
+scripts/dev-mongo-sharded.sh down
+```
+
 ## Test Scenarios
 
 Run these from the repository root in bash. The first block loads `.env` and defines

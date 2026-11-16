@@ -122,8 +122,12 @@ func persistAndPublish(ctx context.Context, s store.Store, pub publisher.Publish
 	}
 
 	for _, e := range events {
-		if err := s.Upsert(ctx, e); err != nil {
+		applied, err := s.Upsert(ctx, e)
+		if err != nil {
 			return fmt.Errorf("upsert %s: %w", e.HazardID, err)
+		}
+		if !applied {
+			continue
 		}
 		if err := pub.Publish(ctx, e); err != nil {
 			log.ErrorContext(ctx, "publish failed, queued for retry", "hazard_id", e.HazardID, "error", err)

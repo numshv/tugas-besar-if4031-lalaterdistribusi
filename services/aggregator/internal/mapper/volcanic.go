@@ -64,6 +64,7 @@ func mapOneVolcanic(raw map[string]any, resolver VolcanoResolver, policy Unknown
 		Longitude:   lon,
 		OccurredAt:  reportedAt,
 		IngestedAt:  time.Now().UTC(),
+		Version:     1,
 		Attributes:  attributesOf(raw, volcanicCanonicalOnlyFields, policy),
 	}, nil
 }

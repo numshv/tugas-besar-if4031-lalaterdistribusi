@@ -38,6 +38,8 @@ type Event struct {
 	IngestedAt  time.Time `json:"ingested_at"   bson:"ingested_at"`
 
 	Attributes map[string]any `json:"attributes" bson:"attributes"`
+
+	Version int64 `json:"-" bson:"version"`
 }
 
 var SummaryFields = []string{
