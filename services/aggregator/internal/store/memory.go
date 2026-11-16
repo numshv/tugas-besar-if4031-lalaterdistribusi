@@ -62,14 +62,14 @@ func (m *Memory) applyLocked(e hazard.Event) (hazard.Event, bool) {
 	return copyEvent(stored), true
 }
 
-func (m *Memory) Upsert(_ context.Context, e hazard.Event) (bool, error) {
+func (m *Memory) Upsert(_ context.Context, e hazard.Event) (hazard.Event, bool, error) {
 	if err := validateEvent(e); err != nil {
-		return false, err
+		return hazard.Event{}, false, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, applied := m.applyLocked(e)
-	return applied, nil
+	stored, applied := m.applyLocked(e)
+	return stored, applied, nil
 }
 
 func (m *Memory) CommitPoll(_ context.Context, source hazard.Source, epoch int64, cursor string, events []hazard.Event) ([]hazard.Event, error) {
@@ -162,7 +162,7 @@ func (m *Memory) ListLatest(_ context.Context, q LatestQuery) (LatestPage, error
 			break
 		}
 	}
-	page := LatestPage{Items: items}
+	page := LatestPage{Items: items, UnavailableUnits: []string{}}
 	if len(items) > q.Limit {
 		page.Items = items[:q.Limit]
 		page.NextCursor = encodeLatestCursor(q, page.Items[q.Limit-1])

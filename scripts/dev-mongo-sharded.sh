@@ -12,8 +12,9 @@ MEMBERS=(mongo-cfg-a mongo-shard0-a mongo-shard1-b)
 TOPO='{"config":{"name":"cfg","members":[{"host":"mongo-cfg-a:27017","slot":"a","priority":2}]},"shards":[{"name":"shard-0","members":[{"host":"mongo-shard0-a:27017","slot":"a","priority":2}]},{"name":"shard-1","members":[{"host":"mongo-shard1-b:27017","slot":"b","priority":2}]}]}'
 
 member() {
-  local name="$1" replset="$2" role="$3"
+  local name="$1" replset="$2" role="$3" hostport="$4"
   docker run -d --name "$name" --hostname "$name" --network "$NET" --memory 512m \
+    -p "127.0.0.1:$hostport:27017" \
     -v "$NET-$name:/data/db" -v "$NET-keyfile:/keyfile:ro" \
     -v "$ROOT/deploy/k8s/overlays/dev/mongod.conf:/etc/mongo/mongod.conf:ro" \
     -v "$M/mongod-start.sh:/scripts/mongod-start.sh:ro" -v "$M/bootstrap.js:/scripts/bootstrap.js:ro" \
@@ -26,9 +27,9 @@ up() {
   docker network create "$NET" >/dev/null 2>&1 || true
   docker run --rm -v "$NET-keyfile:/keyfile" "$IMG" sh -c \
     '[ -f /keyfile/mongo-keyfile ] || openssl rand -base64 756 > /keyfile/mongo-keyfile; chown 999:999 /keyfile/mongo-keyfile; chmod 400 /keyfile/mongo-keyfile'
-  member mongo-cfg-a cfg configsvr
-  member mongo-shard0-a shard-0 shardsvr
-  member mongo-shard1-b shard-1 shardsvr
+  member mongo-cfg-a cfg configsvr 27101
+  member mongo-shard0-a shard-0 shardsvr 27102
+  member mongo-shard1-b shard-1 shardsvr 27103
   docker run -d --name mongo-dev-mongos --network "$NET" --network-alias mongodb --memory 256m \
     -p "127.0.0.1:$PORT:27017" -v "$NET-keyfile:/keyfile:ro" "$IMG" \
     mongos --configdb cfg/mongo-cfg-a:27017 --port 27017 --bind_ip_all --keyFile /keyfile/mongo-keyfile >/dev/null
@@ -40,10 +41,11 @@ up() {
     "$IMG" mongosh --nodb --quiet /scripts/mongo-init.js | tail -1
   echo "root: mongodb://root:$ROOT_PW@127.0.0.1:$PORT/?authSource=admin"
   echo "app:  mongodb://bnpb_app:devapp@127.0.0.1:$PORT/bnpb?authSource=bnpb"
+  echo "members on host: cfg-a 127.0.0.1:27101, shard-0-a 127.0.0.1:27102, shard-1-b 127.0.0.1:27103 (monitor user bnpb_monitor / devmonitor)"
 }
 
 down() {
-  docker rm -f "${MEMBERS[@]}" mongo-dev-mongos >/dev/null 2>&1 || true
+  docker rm -f -v "${MEMBERS[@]}" mongo-dev-mongos >/dev/null 2>&1 || true
   for v in keyfile "${MEMBERS[@]}"; do docker volume rm "$NET-$v" >/dev/null 2>&1 || true; done
   docker network rm "$NET" >/dev/null 2>&1 || true
   echo "removed"

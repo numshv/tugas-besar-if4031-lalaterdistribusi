@@ -62,12 +62,19 @@ func mustGet(t *testing.T, s store.Store, id string) hazard.Event {
 
 func mustUpsert(t *testing.T, s store.Store, e hazard.Event, want bool) {
 	t.Helper()
-	applied, err := s.Upsert(context.Background(), e)
+	stored, applied, err := s.Upsert(context.Background(), e)
 	if err != nil {
 		t.Fatalf("upsert %s: %v", e.SourceRefID, err)
 	}
 	if applied != want {
 		t.Fatalf("upsert %s v%d applied=%v, want %v", e.SourceRefID, e.Version, applied, want)
+	}
+	if !applied {
+		return
+	}
+	got := mustGet(t, s, e.HazardID)
+	if stored.HazardID != e.HazardID || stored.Version != e.Version || !stored.IngestedAt.Equal(got.IngestedAt) {
+		t.Fatalf("upsert returned %+v, but store holds %+v", stored, got)
 	}
 }
 
@@ -191,7 +198,7 @@ func Run(t *testing.T, newStore Factory) {
 		s := newStore(t, NewClock().Now)
 		bad := event("bad", hazard.TypeSeismic, 1)
 		bad.HazardID = ""
-		if _, err := s.Upsert(ctx, bad); !errors.Is(err, store.ErrInvalidEvent) {
+		if _, _, err := s.Upsert(ctx, bad); !errors.Is(err, store.ErrInvalidEvent) {
 			t.Fatalf("upsert err = %v, want ErrInvalidEvent", err)
 		}
 		if _, err := s.CommitPoll(ctx, hazard.SourceBMKG, 1, "c", []hazard.Event{bad}); !errors.Is(err, store.ErrInvalidEvent) {

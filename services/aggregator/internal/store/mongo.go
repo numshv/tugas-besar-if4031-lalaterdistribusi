@@ -23,9 +23,12 @@ const (
 
 type MongoStore struct {
 	client *mongo.Client
+	db     *mongo.Database
 	col    *mongo.Collection
 	fences *mongo.Collection
 	now    func() time.Time
+	health Health
+	mode   PartialMode
 }
 
 func NewMongoClient(ctx context.Context, uri string) (*mongo.Client, error) {
@@ -57,14 +60,22 @@ func NewMongoStore(client *mongo.Client, dbName string) *MongoStore {
 	db := client.Database(dbName)
 	return &MongoStore{
 		client: client,
+		db:     db,
 		col:    db.Collection("hazard_events", collOpts),
 		fences: db.Collection("fences", collOpts),
 		now:    time.Now,
+		mode:   PartialLiteral,
 	}
 }
 
 func (s *MongoStore) WithClock(now func() time.Time) *MongoStore {
 	s.now = now
+	return s
+}
+
+func (s *MongoStore) WithHealth(h Health, mode PartialMode) *MongoStore {
+	s.health = h
+	s.mode = mode
 	return s
 }
 
@@ -139,10 +150,11 @@ func fromDocument(d document) hazard.Event {
 	}
 }
 
-func (s *MongoStore) Upsert(ctx context.Context, e hazard.Event) (bool, error) {
+func (s *MongoStore) Upsert(ctx context.Context, e hazard.Event) (hazard.Event, bool, error) {
 	if err := validateEvent(e); err != nil {
-		return false, err
+		return hazard.Event{}, false, err
 	}
+	defer observe("upsert", time.Now())
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
 
@@ -157,14 +169,16 @@ func (s *MongoStore) Upsert(ctx context.Context, e hazard.Event) (bool, error) {
 		"$set":         contentFields(e),
 		"$setOnInsert": bson.M{"ingested_at": ingestTime(s.now)},
 	}
-	res, err := s.col.UpdateOne(ctx, filter, update, options.Update().SetUpsert(true))
+	var d document
+	err := s.col.FindOneAndUpdate(ctx, filter, update,
+		options.FindOneAndUpdate().SetUpsert(true).SetReturnDocument(options.After)).Decode(&d)
 	if mongo.IsDuplicateKeyError(err) {
-		return false, nil
+		return hazard.Event{}, false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("upsert hazard_id=%s: %w", e.HazardID, err)
+		return hazard.Event{}, false, fmt.Errorf("upsert hazard_id=%s: %w", e.HazardID, err)
 	}
-	return res.UpsertedCount > 0 || res.ModifiedCount > 0, nil
+	return fromDocument(d), true, nil
 }
 
 type fenceDocument struct {
@@ -184,6 +198,7 @@ func (s *MongoStore) CommitPoll(ctx context.Context, source hazard.Source, epoch
 			return nil, err
 		}
 	}
+	defer observe("commit_poll", time.Now())
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
 
@@ -277,6 +292,7 @@ func (s *MongoStore) commitPollTxn(sc mongo.SessionContext, source hazard.Source
 }
 
 func (s *MongoStore) LoadCheckpoint(ctx context.Context, source hazard.Source) (string, int64, error) {
+	defer observe("load_checkpoint", time.Now())
 	ctx, cancel := context.WithTimeout(ctx, readTimeout)
 	defer cancel()
 	var fence fenceDocument
@@ -291,6 +307,7 @@ func (s *MongoStore) LoadCheckpoint(ctx context.Context, source hazard.Source) (
 }
 
 func (s *MongoStore) Get(ctx context.Context, hazardID string) (hazard.Event, error) {
+	defer observe("get", time.Now())
 	ctx, cancel := context.WithTimeout(ctx, readTimeout)
 	defer cancel()
 	var d document
@@ -309,6 +326,7 @@ func (s *MongoStore) ListLatest(ctx context.Context, q LatestQuery) (LatestPage,
 	if err != nil {
 		return LatestPage{}, err
 	}
+	defer observe("list_latest", time.Now())
 	ctx, cancel := context.WithTimeout(ctx, readTimeout)
 	defer cancel()
 
@@ -337,32 +355,51 @@ func (s *MongoStore) ListLatest(ctx context.Context, q LatestQuery) (LatestPage,
 		filter["$and"] = conds
 	}
 
-	cur, err := s.col.Find(ctx, filter, options.Find().
-		SetSort(bson.D{{Key: "ingested_at", Value: dir}, {Key: "_id", Value: dir}}).
-		SetLimit(int64(q.Limit+1)).
-		SetMaxTime(readTimeout))
+	docs, mongosPartial, err := s.findPartial(ctx, filter, bson.D{{Key: "ingested_at", Value: dir}, {Key: "_id", Value: dir}}, q.Limit+1)
 	if err != nil {
 		return LatestPage{}, fmt.Errorf("list latest: %w", err)
 	}
-	defer cur.Close(ctx)
-
-	items := make([]hazard.Event, 0, q.Limit+1)
-	for cur.Next(ctx) {
-		var d document
-		if err := cur.Decode(&d); err != nil {
-			return LatestPage{}, fmt.Errorf("decode document: %w", err)
-		}
+	items := make([]hazard.Event, 0, len(docs))
+	for _, d := range docs {
 		items = append(items, fromDocument(d))
 	}
-	if err := cur.Err(); err != nil {
-		return LatestPage{}, fmt.Errorf("list latest: %w", err)
-	}
 	page := LatestPage{Items: items}
+	page.Partial, page.UnavailableUnits = partialStatus(s.health, s.mode, mongosPartial)
+	if page.Partial {
+		partialReads.WithLabelValues("list_latest").Inc()
+	}
 	if len(items) > q.Limit {
 		page.Items = items[:q.Limit]
 		page.NextCursor = encodeLatestCursor(q, page.Items[q.Limit-1])
 	}
 	return page, nil
+}
+
+type findReply struct {
+	Cursor struct {
+		FirstBatch             []document `bson:"firstBatch"`
+		PartialResultsReturned bool       `bson:"partialResultsReturned"`
+	} `bson:"cursor"`
+}
+
+func (s *MongoStore) findPartial(ctx context.Context, filter bson.M, sort bson.D, limit int) ([]document, bool, error) {
+	cmd := bson.D{
+		{Key: "find", Value: s.col.Name()},
+		{Key: "filter", Value: filter},
+		{Key: "sort", Value: sort},
+		{Key: "limit", Value: limit},
+		{Key: "batchSize", Value: limit},
+		{Key: "singleBatch", Value: true},
+		{Key: "allowPartialResults", Value: true},
+		{Key: "maxTimeMS", Value: readTimeout.Milliseconds()},
+		{Key: "readConcern", Value: bson.D{{Key: "level", Value: "majority"}}},
+	}
+	var reply findReply
+	err := s.db.RunCommand(ctx, cmd, options.RunCmd().SetReadPreference(readpref.PrimaryPreferred())).Decode(&reply)
+	if err != nil {
+		return nil, false, err
+	}
+	return reply.Cursor.FirstBatch, reply.Cursor.PartialResultsReturned, nil
 }
 
 func (s *MongoStore) ListByType(ctx context.Context, hazardType hazard.Type, since time.Time, cursor *hazard.Cursor, limit int) ([]hazard.Event, bool, error) {

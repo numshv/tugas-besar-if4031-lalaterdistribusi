@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - deployment.yaml
   - service.yaml
+  - rbac.yaml
 configMapGenerator:
   - name: aggregator-config
     literals:
@@ -14,3 +15,4 @@ configMapGenerator:
       - AGG_MAX_CONCURRENCY=64
       - UNKNOWN_FIELD_POLICY=passthrough
       - MONGO_APP_USERNAME=bnpb_app
+      - STORE_PARTIAL_MODE=literal

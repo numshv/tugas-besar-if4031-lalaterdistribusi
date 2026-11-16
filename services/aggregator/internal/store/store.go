@@ -31,7 +31,7 @@ const MaxLatestLimit = 1000
 // nilai IngestedAt dari caller diabaikan. Event hanya ditulis bila belum ada
 // atau Version-nya lebih besar dari yang tersimpan.
 type Store interface {
-	Upsert(ctx context.Context, e hazard.Event) (applied bool, err error)
+	Upsert(ctx context.Context, e hazard.Event) (stored hazard.Event, applied bool, err error)
 	CommitPoll(ctx context.Context, source hazard.Source, epoch int64, cursor string, events []hazard.Event) (applied []hazard.Event, err error)
 	LoadCheckpoint(ctx context.Context, source hazard.Source) (cursor string, epoch int64, err error)
 	Get(ctx context.Context, hazardID string) (hazard.Event, error)
@@ -49,8 +49,51 @@ type LatestQuery struct {
 }
 
 type LatestPage struct {
-	Items      []hazard.Event
-	NextCursor string
+	Items            []hazard.Event
+	NextCursor       string
+	Partial          bool
+	UnavailableUnits []string
+}
+
+type Health interface {
+	Unavailable() (units []string, shardsDown []string)
+}
+
+type PartialMode string
+
+const (
+	PartialLiteral PartialMode = "literal"
+	PartialData    PartialMode = "data"
+)
+
+func ParsePartialMode(raw string) (PartialMode, error) {
+	switch PartialMode(raw) {
+	case "", PartialLiteral:
+		return PartialLiteral, nil
+	case PartialData:
+		return PartialData, nil
+	}
+	return "", fmt.Errorf("STORE_PARTIAL_MODE must be %q or %q", PartialLiteral, PartialData)
+}
+
+func partialStatus(h Health, mode PartialMode, mongosPartial bool) (bool, []string) {
+	units := []string{}
+	var shardsDown []string
+	if h != nil {
+		u, s := h.Unavailable()
+		if u != nil {
+			units = u
+		}
+		shardsDown = s
+	}
+	partial := mongosPartial
+	switch mode {
+	case PartialData:
+		partial = partial || len(shardsDown) > 0
+	default:
+		partial = partial || len(units) > 0
+	}
+	return partial, units
 }
 
 type latestCursor struct {
@@ -69,7 +112,7 @@ func filterKey(q LatestQuery) string {
 	if !q.Since.IsZero() {
 		since = q.Since.UnixMilli()
 	}
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%d|%t", q.Type, q.Source, since, q.Ascending)))
+	sum := sha256.Sum256(fmt.Appendf(nil, "%s|%s|%d|%t", q.Type, q.Source, since, q.Ascending))
 	return hex.EncodeToString(sum[:4])
 }
 

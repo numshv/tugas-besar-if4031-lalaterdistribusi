@@ -22,6 +22,9 @@ import (
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/poller"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/publisher"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/store"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/storemon"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const service = "aggregator"
@@ -65,6 +68,20 @@ func run(log *slog.Logger) error {
 	volcanoResolver, err := store.NewMongoVolcanoResolver(ctx, mongoClient, cfg.MongoDB)
 	if err != nil {
 		return fmt.Errorf("init volcano resolver: %w", err)
+	}
+
+	if cfg.Topology != "" {
+		units, err := startStoreMonitor(ctx, cfg, mongoStore, log)
+		if err != nil {
+			return fmt.Errorf("start store monitor: %w", err)
+		}
+		defer func() {
+			closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			units.Close(closeCtx)
+		}()
+	} else {
+		log.Info("TOPOLOGY_JSON not set, storage health monitor disabled")
 	}
 
 	kafkaPub := publisher.NewKafkaPublisher(cfg.KafkaBrokers, cfg.KafkaTopic)
@@ -113,7 +130,30 @@ func run(log *slog.Logger) error {
 	}()
 
 	handler := api.New(mongoStore, p, log, cfg.MaxConcurrency)
-	return httpx.ListenAndServe(ctx, ":"+cfg.Port, httpx.Middleware(log)(handler), log)
+	root := http.NewServeMux()
+	root.Handle("GET /metrics", promhttp.Handler())
+	root.Handle("/", httpx.Middleware(log)(handler))
+	return httpx.ListenAndServe(ctx, ":"+cfg.Port, root, log)
+}
+
+func startStoreMonitor(ctx context.Context, cfg config, s *store.MongoStore, log *slog.Logger) (*storemon.MongoUnits, error) {
+	topology, err := storemon.ParseTopology(cfg.Topology)
+	if err != nil {
+		return nil, err
+	}
+	units := storemon.NewMongoUnits(cfg.MonitorUser, cfg.MonitorPassword, cfg.MongoDB)
+	nodes := storemon.NodesFromEnvironment(ctx, cfg.Namespace, log)
+	monitor := storemon.NewMonitor(topology.Units(), units, nodes, 2*time.Second, time.Second)
+	monitor.ProbeOnce(ctx)
+	go monitor.Run(ctx)
+
+	collector := storemon.NewCollector(monitor, units, 10*time.Second, 3*time.Second)
+	prometheus.MustRegister(collector)
+	go collector.Run(ctx)
+
+	s.WithHealth(monitor, cfg.PartialMode)
+	log.Info("storage health monitor started", "units", len(topology.Units()), "partial_mode", cfg.PartialMode)
+	return units, nil
 }
 
 func persistAndPublish(ctx context.Context, s store.Store, pub publisher.Publisher, retryQ *publishRetryQueue, events []hazard.Event, mapErrs []error, log *slog.Logger) error {
@@ -122,16 +162,16 @@ func persistAndPublish(ctx context.Context, s store.Store, pub publisher.Publish
 	}
 
 	for _, e := range events {
-		applied, err := s.Upsert(ctx, e)
+		stored, applied, err := s.Upsert(ctx, e)
 		if err != nil {
 			return fmt.Errorf("upsert %s: %w", e.HazardID, err)
 		}
 		if !applied {
 			continue
 		}
-		if err := pub.Publish(ctx, e); err != nil {
-			log.ErrorContext(ctx, "publish failed, queued for retry", "hazard_id", e.HazardID, "error", err)
-			retryQ.enqueue(e, log)
+		if err := pub.Publish(ctx, stored); err != nil {
+			log.ErrorContext(ctx, "publish failed, queued for retry", "hazard_id", stored.HazardID, "error", err)
+			retryQ.enqueue(stored, log)
 			continue
 		}
 	}
@@ -153,6 +193,12 @@ type config struct {
 	MongoURI string
 	MongoDB  string
 
+	Topology        string
+	MonitorUser     string
+	MonitorPassword string
+	PartialMode     store.PartialMode
+	Namespace       string
+
 	KafkaBrokers []string
 	KafkaTopic   string
 }
@@ -172,7 +218,16 @@ func loadConfig() (config, error) {
 		MongoDB:            os.Getenv("MONGO_DB"),
 		KafkaBrokers:       strings.Split(os.Getenv("KAFKA_BROKERS"), ","),
 		KafkaTopic:         os.Getenv("KAFKA_TOPIC"),
+		Topology:           os.Getenv("TOPOLOGY_JSON"),
+		MonitorUser:        os.Getenv("MONGO_MONITOR_USERNAME"),
+		MonitorPassword:    os.Getenv("MONGO_MONITOR_PASSWORD"),
+		Namespace:          os.Getenv("POD_NAMESPACE"),
 	}
+	mode, err := store.ParsePartialMode(os.Getenv("STORE_PARTIAL_MODE"))
+	if err != nil {
+		return cfg, err
+	}
+	cfg.PartialMode = mode
 	// fail fast: jangan sampai service nyala tapi diam-diam tidak bisa
 	// otentikasi ke BMKG/PVMBG, ketahuan baru saat poll pertama gagal
 	if cfg.BMKGAPIKey == "" {

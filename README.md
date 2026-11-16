@@ -192,7 +192,28 @@ when `STORE_TEST_MONGO_URI` is set:
 scripts/dev-mongo-sharded.sh up
 STORE_TEST_MONGO_URI='mongodb://root:devroot@127.0.0.1:27017/?authSource=admin' \
   go test ./services/aggregator/internal/store/ -race -count=1
+# stops shard-1 for real and checks reads come back partial instead of failing
+STORE_TEST_DOCKER=1 STORE_TEST_MONGO_URI='mongodb://root:devroot@127.0.0.1:27017/?authSource=admin' \
+  go test ./services/aggregator/internal/storemon/ -run PartialRead -v -count=1
 scripts/dev-mongo-sharded.sh down
+```
+
+The aggregator probes every storage unit with `hello` every 2 seconds and marks a unit
+down after two failed probes in a row. Reads that cross shards answer with
+`partial` and `unavailable_units` instead of failing: `STORE_PARTIAL_MODE=literal` (default)
+sets `partial` whenever a data unit is down, `data` only when a whole shard is unreachable.
+Units are named per member (`shard-2-c`, `cfg-a`) so the name survives a failover; the node
+comes from the Kubernetes API (read-only Role `aggregator-pod-reader`). `GET /metrics` on the
+aggregator exposes `store_unit_up`, `store_unit_primary`, `store_docs`, `store_data_bytes`,
+`store_ops_total`, `store_repl_ops_total`, `store_query_duration_seconds` and
+`store_partial_reads_total`, labelled by `unit`, `shard` and `node`. Every aggregator replica
+exports the same unit series, so deduplicate with `max by (node, unit)` first. Write skew
+across nodes (1.0 means perfectly even):
+
+```promql
+max(sum by (node) (max by (node, unit) (rate(store_ops_total{op="insert"}[1m]))))
+/
+avg(sum by (node) (max by (node, unit) (rate(store_ops_total{op="insert"}[1m]))))
 ```
 
 ## Test Scenarios
