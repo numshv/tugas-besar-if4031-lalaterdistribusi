@@ -16,3 +16,5 @@ configMapGenerator:
       - UNKNOWN_FIELD_POLICY=passthrough
       - MONGO_APP_USERNAME=bnpb_app
       - STORE_PARTIAL_MODE=literal
+      - KAFKA_UPSERTS_TOPIC=bnpb.hazard-upserts.v1
+      - KAFKA_UPSERTS_GROUP=bnpb.aggregator.hazard-upserts

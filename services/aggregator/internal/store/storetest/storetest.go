@@ -261,6 +261,52 @@ func Run(t *testing.T, newStore Factory) {
 		}
 	})
 
+	t.Run("retract soft-deletes, keeps content, and a newer upsert revives", func(t *testing.T) {
+		s := newStore(t, NewClock().Now)
+		e := event("fire-1", hazard.TypeSeismic, 3)
+		mustUpsert(t, s, e, true)
+		first := mustGet(t, s, e.HazardID)
+
+		if _, applied, err := s.Retract(ctx, e.Source, e.SourceRefID, 3); err != nil || applied {
+			t.Fatalf("retract with same version: applied=%v err=%v, want no-op", applied, err)
+		}
+		stored, applied, err := s.Retract(ctx, e.Source, e.SourceRefID, 4)
+		if err != nil || !applied || !stored.Retracted || stored.Version != 4 {
+			t.Fatalf("retract v4: stored=%+v applied=%v err=%v", stored, applied, err)
+		}
+		got := mustGet(t, s, e.HazardID)
+		if !got.Retracted || got.AreaName != e.AreaName || !got.IngestedAt.Equal(first.IngestedAt) {
+			t.Fatalf("retract must keep content and ingested_at: %+v", got)
+		}
+
+		stale := e
+		stale.Version = 4
+		mustUpsert(t, s, stale, false)
+
+		revived := e
+		revived.Version = 5
+		mustUpsert(t, s, revived, true)
+		if got := mustGet(t, s, e.HazardID); got.Retracted {
+			t.Fatal("a newer upsert must clear retracted")
+		}
+	})
+
+	t.Run("retract before upsert leaves a tombstone that blocks older upserts", func(t *testing.T) {
+		s := newStore(t, NewClock().Now)
+		e := event("fire-2", hazard.TypeSeismic, 2)
+		stored, applied, err := s.Retract(ctx, e.Source, e.SourceRefID, 7)
+		if err != nil || !applied || stored.HazardID != e.HazardID || !stored.Retracted {
+			t.Fatalf("tombstone: stored=%+v applied=%v err=%v", stored, applied, err)
+		}
+		mustUpsert(t, s, e, false)
+		if got := mustGet(t, s, e.HazardID); !got.Retracted || got.Version != 7 {
+			t.Fatalf("older upsert revived a tombstone: %+v", got)
+		}
+		if _, _, err := s.Retract(ctx, "", "x", 1); !errors.Is(err, store.ErrInvalidEvent) {
+			t.Fatalf("retract without source err = %v, want ErrInvalidEvent", err)
+		}
+	})
+
 	t.Run("concurrent leaders: the newer epoch wins and the older is fenced", func(t *testing.T) {
 		s := newStore(t, NewClock().Now)
 		var wg sync.WaitGroup

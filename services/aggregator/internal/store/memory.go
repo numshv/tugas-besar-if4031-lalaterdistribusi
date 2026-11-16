@@ -72,6 +72,27 @@ func (m *Memory) Upsert(_ context.Context, e hazard.Event) (hazard.Event, bool, 
 	return stored, applied, nil
 }
 
+func (m *Memory) Retract(_ context.Context, source hazard.Source, sourceRefID string, version int64) (hazard.Event, bool, error) {
+	if err := validateRetract(source, sourceRefID); err != nil {
+		return hazard.Event{}, false, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id := hazard.NewID(source, sourceRefID)
+	current, exists := m.events[id]
+	if exists && version <= current.Version {
+		return hazard.Event{}, false, nil
+	}
+	if !exists {
+		current = hazard.Event{HazardID: id, Source: source, SourceRefID: sourceRefID, IngestedAt: ingestTime(m.now)}
+	}
+	current = copyEvent(current)
+	current.Version = version
+	current.Retracted = true
+	m.events[id] = current
+	return copyEvent(current), true, nil
+}
+
 func (m *Memory) CommitPoll(_ context.Context, source hazard.Source, epoch int64, cursor string, events []hazard.Event) ([]hazard.Event, error) {
 	for _, e := range events {
 		if err := validateEvent(e); err != nil {

@@ -32,6 +32,7 @@ const MaxLatestLimit = 1000
 // atau Version-nya lebih besar dari yang tersimpan.
 type Store interface {
 	Upsert(ctx context.Context, e hazard.Event) (stored hazard.Event, applied bool, err error)
+	Retract(ctx context.Context, source hazard.Source, sourceRefID string, version int64) (stored hazard.Event, applied bool, err error)
 	CommitPoll(ctx context.Context, source hazard.Source, epoch int64, cursor string, events []hazard.Event) (applied []hazard.Event, err error)
 	LoadCheckpoint(ctx context.Context, source hazard.Source) (cursor string, epoch int64, err error)
 	Get(ctx context.Context, hazardID string) (hazard.Event, error)
@@ -145,6 +146,13 @@ func validateLatest(q LatestQuery) (*position, error) {
 func validateEvent(e hazard.Event) error {
 	if e.HazardID == "" {
 		return fmt.Errorf("%w: hazard_id is required", ErrInvalidEvent)
+	}
+	return nil
+}
+
+func validateRetract(source hazard.Source, sourceRefID string) error {
+	if source == "" || sourceRefID == "" {
+		return fmt.Errorf("%w: source and source_ref_id are required", ErrInvalidEvent)
 	}
 	return nil
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/publisher"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/store"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/storemon"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/upserts"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -116,6 +117,21 @@ func run(log *slog.Logger) error {
 
 	go p.Run(ctx)
 
+	if cfg.UpsertsTopic != "" {
+		reader := upserts.NewReader(cfg.KafkaBrokers, cfg.UpsertsTopic, cfg.UpsertsGroup)
+		defer reader.Close()
+		consumer := &upserts.Consumer{
+			Reader:     reader,
+			Store:      mongoStore,
+			Publisher:  kafkaPub,
+			DeadLetter: upserts.LogDeadLetter{Log: log},
+			Log:        log.With("topic", cfg.UpsertsTopic, "group", cfg.UpsertsGroup),
+		}
+		go consumer.Run(ctx)
+	} else {
+		log.Info("KAFKA_UPSERTS_TOPIC not set, hazard-upserts consumer disabled")
+	}
+
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
@@ -201,6 +217,8 @@ type config struct {
 
 	KafkaBrokers []string
 	KafkaTopic   string
+	UpsertsTopic string
+	UpsertsGroup string
 }
 
 func loadConfig() (config, error) {
@@ -218,6 +236,8 @@ func loadConfig() (config, error) {
 		MongoDB:            os.Getenv("MONGO_DB"),
 		KafkaBrokers:       strings.Split(os.Getenv("KAFKA_BROKERS"), ","),
 		KafkaTopic:         os.Getenv("KAFKA_TOPIC"),
+		UpsertsTopic:       os.Getenv("KAFKA_UPSERTS_TOPIC"),
+		UpsertsGroup:       envString("KAFKA_UPSERTS_GROUP", "bnpb.aggregator.hazard-upserts"),
 		Topology:           os.Getenv("TOPOLOGY_JSON"),
 		MonitorUser:        os.Getenv("MONGO_MONITOR_USERNAME"),
 		MonitorPassword:    os.Getenv("MONGO_MONITOR_PASSWORD"),

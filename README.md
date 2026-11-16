@@ -216,6 +216,38 @@ max(sum by (node) (max by (node, unit) (rate(store_ops_total{op="insert"}[1m])))
 avg(sum by (node) (max by (node, unit) (rate(store_ops_total{op="insert"}[1m]))))
 ```
 
+### Writing HazardEvents from other services (`hazard-upserts`)
+
+The aggregator is the only writer of HazardEvents. Polled sources (BMKG, PVMBG) are stored
+directly; every other producer (wildfire processor, coastal ingester, dataset loader) sends
+messages to `bnpb.hazard-upserts.v1` (6 partitions, 7-day retention), which all aggregator
+replicas consume as group `bnpb.aggregator.hazard-upserts`. Build messages with
+`hazard.EncodeUpsert` instead of writing JSON by hand:
+
+```go
+enc, err := hazard.EncodeUpsert(hazard.UpsertMessage{
+    Op: hazard.OpUpsert, Source: hazard.SourceSatelit, SourceRefID: "fire-0a41c7", Version: 1042,
+    HazardType: hazard.TypeWildfire, Severity: hazard.SeveritySiaga, AreaName: "Kalimantan Tengah",
+    Latitude: -2.51234, Longitude: 113.8045, OccurredAt: occurredAt, Attributes: attrs,
+}, hazard.UpsertMeta{CorrelationID: cid, Traceparent: tp})
+// write enc.Key, enc.Value and enc.Headers to bnpb.hazard-upserts.v1
+```
+
+- The key `source|source_ref_id` keeps every update of one event on one partition, in order.
+- `version` must increase with every change of the same event (feed offset for wildfires,
+  `observed_at` in ms for coastal readings); an equal or lower version is ignored.
+- `op: retract` only needs `source`, `source_ref_id` and `version`: the event stays and is
+  marked retracted, and a later, higher version revives it.
+- The aggregator computes `hazard_id` and `ingested_at`; values sent by producers are ignored.
+- Invalid messages (bad JSON, invalid UTF-8, unknown op/source/type, version ≤ 0, over
+  1 MB) are parked and counted in `hazard_upserts_dead_lettered_total{reason}`; the
+  partition keeps moving. Storage or publish failures are retried in place and the offset is
+  committed only after the event is stored and published.
+- Stored events are re-published to `bnpb.hazard-events.v1` with headers `X-Hazard-Version`
+  and `X-Hazard-Op`; consumers deduplicate on `hazard_id` + version, so updates and
+  retractions are not mistaken for duplicates.
+- `hazard_store_latency_seconds{source}` measures `produced_at` → stored (P4 p95).
+
 ## Test Scenarios
 
 Run these from the repository root in bash. The first block loads `.env` and defines

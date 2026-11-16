@@ -115,6 +115,7 @@ type document struct {
 	IngestedAt  time.Time      `bson:"ingested_at"`
 	Attributes  map[string]any `bson:"attributes"`
 	Version     int64          `bson:"version"`
+	Retracted   bool           `bson:"retracted"`
 }
 
 func contentFields(e hazard.Event) bson.M {
@@ -133,6 +134,7 @@ func contentFields(e hazard.Event) bson.M {
 		"occurred_at":   e.OccurredAt,
 		"attributes":    attrs,
 		"version":       e.Version,
+		"retracted":     e.Retracted,
 	}
 }
 
@@ -146,8 +148,45 @@ func fromDocument(d document) hazard.Event {
 		HazardType: hazard.Type(d.HazardType), Severity: hazard.Severity(d.Severity),
 		AreaName: d.AreaName, Latitude: d.Latitude, Longitude: d.Longitude,
 		OccurredAt: d.OccurredAt.UTC(), IngestedAt: d.IngestedAt.UTC(), Attributes: attrs,
-		Version: d.Version,
+		Version: d.Version, Retracted: d.Retracted,
 	}
+}
+
+func (s *MongoStore) Retract(ctx context.Context, source hazard.Source, sourceRefID string, version int64) (hazard.Event, bool, error) {
+	if err := validateRetract(source, sourceRefID); err != nil {
+		return hazard.Event{}, false, err
+	}
+	defer observe("retract", time.Now())
+	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
+	defer cancel()
+
+	id := hazard.NewID(source, sourceRefID)
+	filter := bson.M{
+		"_id": id,
+		"$or": bson.A{
+			bson.M{"version": bson.M{"$lt": version}},
+			bson.M{"version": bson.M{"$exists": false}},
+		},
+	}
+	update := bson.M{
+		"$set": bson.M{"retracted": true, "version": version},
+		"$setOnInsert": bson.M{
+			"source":        string(source),
+			"source_ref_id": sourceRefID,
+			"attributes":    bson.M{},
+			"ingested_at":   ingestTime(s.now),
+		},
+	}
+	var d document
+	err := s.col.FindOneAndUpdate(ctx, filter, update,
+		options.FindOneAndUpdate().SetUpsert(true).SetReturnDocument(options.After)).Decode(&d)
+	if mongo.IsDuplicateKeyError(err) {
+		return hazard.Event{}, false, nil
+	}
+	if err != nil {
+		return hazard.Event{}, false, fmt.Errorf("retract hazard_id=%s: %w", id, err)
+	}
+	return fromDocument(d), true, nil
 }
 
 func (s *MongoStore) Upsert(ctx context.Context, e hazard.Event) (hazard.Event, bool, error) {

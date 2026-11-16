@@ -102,7 +102,7 @@ func main() {
 			mlog.Error("poison_message_skipped", "err", "missing hazard_id")
 			return nil
 		}
-		if dedupe.Seen(item.HazardID) {
+		if dedupe.Seen(kafkax.DedupeKey(m, item.HazardID)) {
 			mlog.Info("duplicate_skipped", "hazard_id", item.HazardID)
 			return nil
 		}
