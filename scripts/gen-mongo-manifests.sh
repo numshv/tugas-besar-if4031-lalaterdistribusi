@@ -79,25 +79,25 @@ spec:
       containers:
         - name: mongod
           image: mongo:7.0
-          args:
-            - mongod
-            - --config
-            - /etc/mongo/mongod.conf
-            - --$mode
-            - --replSet
-            - $replset
-            - --port
-            - "$PORT"
-            - --bind_ip_all
-            - --keyFile
-            - /keyfile/mongo-keyfile
+          command: ["bash", "/scripts/mongod-start.sh"]
           env:
-            - name: MONGO_INITDB_ROOT_USERNAME
+            - name: MONGO_REPLSET
+              value: $replset
+            - name: MONGO_ROLE
+              value: $mode
+            - name: MONGO_SELF_HOST
+              value: $name:$PORT
+            - name: TOPOLOGY_JSON
+              valueFrom:
+                configMapKeyRef:
+                  name: mongo-topology
+                  key: topology.json
+            - name: MONGO_ROOT_USERNAME
               valueFrom:
                 configMapKeyRef:
                   name: mongodb-config
-                  key: MONGO_INITDB_ROOT_USERNAME
-            - name: MONGO_INITDB_ROOT_PASSWORD
+                  key: MONGO_ROOT_USERNAME
+            - name: MONGO_ROOT_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: bnpb-secrets
@@ -113,6 +113,9 @@ spec:
               readOnly: true
             - name: conf
               mountPath: /etc/mongo
+              readOnly: true
+            - name: scripts
+              mountPath: /scripts
               readOnly: true
           resources:
             requests:
@@ -143,6 +146,9 @@ spec:
         - name: conf
           configMap:
             name: mongod-conf
+        - name: scripts
+          configMap:
+            name: mongod-start
   volumeClaimTemplates:
     - metadata:
         name: data
