@@ -61,8 +61,8 @@ func run(log *slog.Logger) error {
 	}
 
 	schemaVersion := envInt("PVMBG_SCHEMA_VERSION", volcanic.SchemaLegacy)
-	if schemaVersion != volcanic.SchemaLegacy && schemaVersion != volcanic.SchemaConfidence {
-		return fmt.Errorf("PVMBG_SCHEMA_VERSION must be %d or %d", volcanic.SchemaLegacy, volcanic.SchemaConfidence)
+	if !volcanic.ValidSchema(schemaVersion) {
+		return fmt.Errorf("PVMBG_SCHEMA_VERSION must be between %d and %d", volcanic.SchemaMin, volcanic.SchemaMax)
 	}
 
 	interval := time.Duration(envInt("PVMBG_EVENT_INTERVAL_SECONDS", 10)) * time.Second

@@ -40,6 +40,7 @@ type handler struct {
 
 	schemaVersion atomic.Int64
 	outage        atomic.Bool
+	corrupt       corruption
 }
 
 func New(store *volcanic.Store, cfg Config, log *slog.Logger) http.Handler {
@@ -51,6 +52,7 @@ func New(store *volcanic.Store, cfg Config, log *slog.Logger) http.Handler {
 	mux.HandleFunc("GET /volcanic-reports", h.volcanicReports)
 	mux.HandleFunc("POST /admin/schema-version", h.setSchemaVersion)
 	mux.HandleFunc("POST /admin/outage", h.setOutage)
+	mux.HandleFunc("POST /admin/corrupt", h.setCorrupt)
 	return mux
 }
 
@@ -60,6 +62,7 @@ func (h *handler) health(w http.ResponseWriter, r *http.Request) {
 		"service":        h.cfg.Service,
 		"outage":         h.outage.Load(),
 		"schema_version": h.schemaVersion.Load(),
+		"corrupt":        h.corrupt.status(),
 	})
 }
 
@@ -82,9 +85,17 @@ func (h *handler) volcanicReports(w http.ResponseWriter, r *http.Request) {
 	schemaVersion := int(h.schemaVersion.Load())
 	reports := h.store.ReportsSince(since)
 
-	out := make([]volcanic.ReportResponse, 0, len(reports))
+	out := make([]map[string]any, 0, len(reports))
 	for _, report := range reports {
-		out = append(out, report.Response(schemaVersion))
+		out = append(out, report.Payload(schemaVersion))
+	}
+
+	if kind := h.corrupt.take(); kind != "" {
+		h.log.WarnContext(r.Context(), "serving corrupted response", "kind", kind)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(corruptBody(kind, out))
+		return
 	}
 	httpx.JSON(w, http.StatusOK, out)
 }
@@ -176,9 +187,10 @@ func (h *handler) setSchemaVersion(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	if body.Version == nil || (*body.Version != volcanic.SchemaLegacy && *body.Version != volcanic.SchemaConfidence) {
+	if body.Version == nil || !volcanic.ValidSchema(*body.Version) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_version",
-			"version must be 1 (without confidence_level) or 2 (with confidence_level)")
+			"version must be 1 to 6: 1 legacy, 2 confidence_level, 3 level renamed, "+
+				"4 alert_level numeric, 5 reported_at removed, 6 ash_column_height_m removed")
 		return
 	}
 

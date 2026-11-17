@@ -468,7 +468,7 @@ All variables live in `.env`, with example values in [`.env.example`](.env.examp
 | `PVMBG_SEED_COUNT` | `20` | Historical records created at startup (minimum 20) |
 | `PVMBG_EVENT_INTERVAL_SECONDS` | `10` | How often a new report appears |
 | `PVMBG_OUTAGE_MODE` | `error` | Behaviour during an outage: `error` answers 503 at once, `timeout` holds the request until the caller gives up |
-| `PVMBG_SCHEMA_VERSION` | `1` | Schema at startup: `1` without `confidence_level`, `2` with it |
+| `PVMBG_SCHEMA_VERSION` | `1` | Schema at startup, `1` to `6` (see the schema table under Source mocks) |
 
 **Aggregator**
 
@@ -535,9 +535,32 @@ The aggregator also reads `BMKG_API_KEY`, `PVMBG_TOKEN`, the `MONGO_*` values an
 | BMKG | `GET /seismic-events?since=` | `X-BMKG-Key: <key>` |
 | BMKG | `GET /tsunami-warnings?since=` | `X-BMKG-Key: <key>` |
 | PVMBG | `GET /volcanic-reports?since=` | `Authorization: Bearer pvmbg_v1.<secret>` |
-| PVMBG | `POST /admin/schema-version` with `{"version": 1 \| 2}` | `X-PVMBG-Admin-Token: <token>` |
+| PVMBG | `POST /admin/schema-version` with `{"version": 1..6}` | `X-PVMBG-Admin-Token: <token>` |
 | PVMBG | `POST /admin/outage` with `{"enabled": true \| false}` | `X-PVMBG-Admin-Token: <token>` |
+| PVMBG | `POST /admin/corrupt` with `{"kind": "...", "count": N}` | `X-PVMBG-Admin-Token: <token>` |
 | both | `GET /health` | none |
+
+PVMBG schema versions. Versions 3 to 6 build on version 2.
+
+| Version | Change | Kind |
+| --- | --- | --- |
+| `1` | Base contract, no `confidence_level` | baseline |
+| `2` | Adds `confidence_level` | compatible |
+| `3` | `alert_level` renamed to `level` | incompatible |
+| `4` | `alert_level` becomes a number (`1` Normal to `4` Awas) | incompatible |
+| `5` | Required `reported_at` removed | incompatible |
+| `6` | Optional `ash_column_height_m` removed | compatible |
+
+`POST /admin/corrupt` breaks the next `count` responses of `GET /volcanic-reports`
+(default 1, max 1000, `0` cancels), then the mock serves normal JSON again. `GET /health`
+shows what is still pending.
+
+| `kind` | Body served |
+| --- | --- |
+| `truncated` | Valid JSON cut in half |
+| `deep` | Arrays nested 100,000 levels deep |
+| `invalid_utf8` | A string value starting with bytes `0xff 0xfe` |
+| `oversize` | Valid JSON padded past 8 MiB |
 
 - `since` is an RFC 3339 timestamp and is inclusive. Without it, all records are returned.
 - Tsunami warnings are filtered by the time of their related seismic event, since the
