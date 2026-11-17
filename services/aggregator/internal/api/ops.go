@@ -16,26 +16,47 @@ import (
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/pipeline"
 )
 
-// Replayer reprocesses parked messages of one source.
 type Replayer interface {
 	Replay(ctx context.Context, source string) (pipeline.ReplayResult, error)
 }
 
-// Ops wires the dead letter queue endpoints. They are reachable from outside the
-// cluster through the ingress, so the aggregator checks the caller itself:
-// only the assistants' audit token or a JWT with scope "internal" (BNPB
-// Internal Ops) is accepted.
+// Ops endpoints are reachable through the ingress, so the aggregator checks the
+// caller itself: the assistants' audit token or a JWT with scope "internal".
 type Ops struct {
 	DLQ        dlq.Store
 	Replayer   Replayer
 	AuditToken string
 	Verifier   *jwtauth.Verifier
+	// FieldReports is not routed by the ingress, so its lookup needs no token.
+	FieldReports FieldReportReader
+}
+
+type FieldReportReader interface {
+	Get(ctx context.Context, id string) (map[string]any, bool, error)
 }
 
 func (o *Ops) register(mux *http.ServeMux) {
 	mux.Handle("GET /internal/audit/unprocessed", o.requireInternal(http.HandlerFunc(o.listUnprocessed)))
 	mux.Handle("GET /internal/ops/unprocessed/{id}", o.requireInternal(http.HandlerFunc(o.getUnprocessed)))
 	mux.Handle("POST /internal/ops/replay", o.requireInternal(http.HandlerFunc(o.replay)))
+	if o.FieldReports != nil {
+		mux.HandleFunc("GET /internal/field-reports/{id}", o.getFieldReport)
+	}
+}
+
+func (o *Ops) getFieldReport(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	doc, found, err := o.FieldReports.Get(ctx, r.PathValue("id"))
+	if err != nil {
+		httpx.Error(w, http.StatusServiceUnavailable, "unavailable", "field_reports tidak dapat dijangkau")
+		return
+	}
+	if !found {
+		httpx.Error(w, http.StatusNotFound, "not_found", "laporan belum tersimpan")
+		return
+	}
+	httpx.JSON(w, http.StatusOK, doc)
 }
 
 func (o *Ops) requireInternal(next http.Handler) http.Handler {
@@ -127,8 +148,6 @@ func (o *Ops) listUnprocessed(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": next})
 }
 
-// getUnprocessed shows one message in full, including its payload, so Ops can
-// see exactly what the upstream sent.
 func (o *Ops) getUnprocessed(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
@@ -150,8 +169,7 @@ func (o *Ops) getUnprocessed(w http.ResponseWriter, r *http.Request) {
 	if m.RecoveredAt != nil {
 		out["recovered_at"] = m.RecoveredAt.UTC().Format(time.RFC3339)
 	}
-	// Valid UTF-8 is shown as text; anything else (for example the invalid_utf8
-	// case) as base64 so the exact bytes survive the JSON response.
+	// base64 keeps invalid UTF-8 bytes exact through JSON.
 	if utf8.Valid(m.Payload) {
 		out["payload"] = string(m.Payload)
 	} else {

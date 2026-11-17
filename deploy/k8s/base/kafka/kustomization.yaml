@@ -26,6 +26,7 @@ configMapGenerator:
     literals:
       - KAFKA_BOOTSTRAP=kafka:9092
       - KAFKA_TOPIC_PARTITIONS=3
+      - KAFKA_EXTRA_TOPICS=bnpb.field-reports.v1
       - KAFKA_TOPIC_RETENTION_MS=86400000
       - KAFKA_HEAP_OPTS=-Xmx128m
     files:

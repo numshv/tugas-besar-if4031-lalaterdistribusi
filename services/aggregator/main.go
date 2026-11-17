@@ -15,9 +15,11 @@ import (
 
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/httpx"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/jwtauth"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/kafkax"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/logging"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/api"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/dlq"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/fieldreports"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/mapper"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/pipeline"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/poller"
@@ -111,7 +113,13 @@ func run(log *slog.Logger) error {
 	go p.Run(ctx)
 	go pipe.RunRetrier(ctx, 2*time.Second)
 
-	ops := &api.Ops{DLQ: dlqStore, Replayer: pipe, AuditToken: cfg.AuditToken}
+	fieldStore := fieldreports.NewMongoStore(mongoClient, cfg.MongoDB)
+	if cfg.FieldReportsTopic != "" {
+		consumer := &fieldreports.Consumer{Store: fieldStore, DLQ: dlqStore, Now: time.Now}
+		go kafkax.RunNoDrop(ctx, log, cfg.KafkaBrokers, cfg.FieldReportsTopic, "aggregator.field-reports", consumer.Handle)
+	}
+
+	ops := &api.Ops{DLQ: dlqStore, Replayer: pipe, AuditToken: cfg.AuditToken, FieldReports: fieldStore}
 	if cfg.JWKSURL != "" {
 		keys := jwtauth.NewBackgroundKeyProvider(ctx, cfg.JWKSURL, log, time.Minute)
 		ops.Verifier = &jwtauth.Verifier{Keys: keys, Issuer: cfg.JWTIssuer, Audience: cfg.JWTAudience}
@@ -142,11 +150,12 @@ type config struct {
 	KafkaBrokers []string
 	KafkaTopic   string
 
-	MappingRulesFile string
-	AuditToken       string
-	JWKSURL          string
-	JWTIssuer        string
-	JWTAudience      string
+	MappingRulesFile  string
+	FieldReportsTopic string
+	AuditToken        string
+	JWKSURL           string
+	JWTIssuer         string
+	JWTAudience       string
 }
 
 func loadConfig() (config, error) {
@@ -165,6 +174,7 @@ func loadConfig() (config, error) {
 		KafkaBrokers:       strings.Split(os.Getenv("KAFKA_BROKERS"), ","),
 		KafkaTopic:         os.Getenv("KAFKA_TOPIC"),
 		MappingRulesFile:   os.Getenv("MAPPING_RULES_FILE"),
+		FieldReportsTopic:  os.Getenv("FIELD_REPORTS_TOPIC"),
 		AuditToken:         os.Getenv("AUDIT_TOKEN"),
 		JWKSURL:            os.Getenv("AUTH_JWKS_URL"),
 		JWTIssuer:          os.Getenv("JWT_ISSUER"),

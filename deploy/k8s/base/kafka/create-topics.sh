@@ -1,7 +1,7 @@
 set -eu
 
 BOOTSTRAP="${KAFKA_BOOTSTRAP:-kafka:9092}"
-TOPIC="${KAFKA_TOPIC:-bnpb.hazard-events.v1}"
+TOPICS="${KAFKA_TOPIC:-bnpb.hazard-events.v1} ${KAFKA_EXTRA_TOPICS:-}"
 PARTITIONS="${KAFKA_TOPIC_PARTITIONS:-3}"
 RETENTION_MS="${KAFKA_TOPIC_RETENTION_MS:-86400000}"
 
@@ -10,12 +10,14 @@ until /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP" --list >/de
   sleep 2
 done
 
-/opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP" \
-  --create --if-not-exists \
-  --topic "$TOPIC" \
-  --partitions "$PARTITIONS" \
-  --replication-factor 1 \
-  --config retention.ms="$RETENTION_MS" \
-  --config cleanup.policy=delete
+for TOPIC in $TOPICS; do
+  /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP" \
+    --create --if-not-exists \
+    --topic "$TOPIC" \
+    --partitions "$PARTITIONS" \
+    --replication-factor 1 \
+    --config retention.ms="$RETENTION_MS" \
+    --config cleanup.policy=delete
 
-/opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP" --describe --topic "$TOPIC"
+  /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP" --describe --topic "$TOPIC"
+done
