@@ -2,6 +2,7 @@ package poller
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/correlation"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/httpx"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/guard"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/pipeline"
 )
 
 type Status struct {
@@ -41,12 +44,19 @@ type SourceClient struct {
 	Header  http.Header
 }
 
-func (c SourceClient) getJSON(ctx context.Context, path string, since time.Time, out any) error {
+// getRaw fetches path without decoding it, so the pipeline can check the body
+// and keep it intact if it turns out to be broken.
+func (c SourceClient) getRaw(ctx context.Context, path string, since time.Time) (pipeline.Response, error) {
 	url := c.BaseURL + path
 	if !since.IsZero() {
 		url += "?since=" + since.UTC().Format(time.RFC3339)
 	}
-	return c.HTTP.GetJSON(ctx, url, c.Header, out)
+	body, err := c.HTTP.GetRaw(ctx, url, c.Header, guard.MaxBodyBytes)
+	r := pipeline.Response{Path: path, Body: body, ReceivedAt: time.Now().UTC()}
+	if errors.Is(err, httpx.ErrBodyTooLarge) {
+		r.TooLarge, err = true, nil
+	}
+	return r, err
 }
 
 // processTimeout adalah batas waktu terpisah untuk proses simpan+publish
@@ -65,8 +75,8 @@ type Poller struct {
 	bmkgStatus  *sourceStatus
 	pvmbgStatus *sourceStatus
 
-	onSeismic  func(ctx context.Context, events, warnings []map[string]any) error
-	onVolcanic func(ctx context.Context, reports []map[string]any) error
+	onSeismic  func(ctx context.Context, events, warnings pipeline.Response) error
+	onVolcanic func(ctx context.Context, reports pipeline.Response) error
 
 	mu          sync.Mutex
 	bmkgCursor  time.Time
@@ -75,8 +85,8 @@ type Poller struct {
 
 func New(
 	log *slog.Logger, interval, timeout time.Duration, bmkg, pvmbg SourceClient,
-	onSeismic func(context.Context, []map[string]any, []map[string]any) error,
-	onVolcanic func(context.Context, []map[string]any) error,
+	onSeismic func(context.Context, pipeline.Response, pipeline.Response) error,
+	onVolcanic func(context.Context, pipeline.Response) error,
 ) *Poller {
 	return &Poller{
 		log: log, interval: interval, timeout: timeout,
@@ -121,18 +131,18 @@ func (p *Poller) pollBMKGOnce(ctx context.Context) {
 	since := p.bmkgCursor
 	p.mu.Unlock()
 
-	var events, warnings []map[string]any
+	var events, warnings pipeline.Response
 	var eventsErr, warningsErr error
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		eventsErr = p.bmkg.getJSON(fetchCtx, "/seismic-events", since, &events)
+		events, eventsErr = p.bmkg.getRaw(fetchCtx, pipeline.PathSeismic, since)
 	}()
 	go func() {
 		defer wg.Done()
-		warningsErr = p.bmkg.getJSON(fetchCtx, "/tsunami-warnings", since, &warnings)
+		warnings, warningsErr = p.bmkg.getRaw(fetchCtx, pipeline.PathTsunami, since)
 	}()
 	wg.Wait()
 
@@ -174,8 +184,8 @@ func (p *Poller) pollPVMBGOnce(ctx context.Context) {
 	since := p.pvmbgCursor
 	p.mu.Unlock()
 
-	var reports []map[string]any
-	if err := p.pvmbg.getJSON(fetchCtx, "/volcanic-reports", since, &reports); err != nil {
+	reports, err := p.pvmbg.getRaw(fetchCtx, pipeline.PathVolcanic, since)
+	if err != nil {
 		p.pvmbgStatus.markErr(err)
 		p.log.WarnContext(fetchCtx, "pvmbg poll failed", "error", err)
 		return

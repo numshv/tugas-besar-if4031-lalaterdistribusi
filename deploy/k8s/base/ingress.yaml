@@ -35,6 +35,13 @@ spec:
                 name: aggregator
                 port:
                   number: 8083
+          - path: /internal/ops
+            pathType: Prefix
+            backend:
+              service:
+                name: aggregator
+                port:
+                  number: 8083
           - path: /
             pathType: Prefix
             backend:

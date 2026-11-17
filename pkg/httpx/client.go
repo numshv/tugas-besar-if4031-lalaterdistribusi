@@ -88,6 +88,44 @@ func (c *Client) GetJSONWithResponseHeader(ctx context.Context, url string, head
 	return resp.Header.Get(responseHeader), nil
 }
 
+// ErrBodyTooLarge is returned by GetRaw when the body exceeds maxBytes.
+var ErrBodyTooLarge = fmt.Errorf("response body too large")
+
+// GetRaw returns the response body as bytes without decoding it, reading at most
+// maxBytes. When the body is larger it returns the first maxBytes bytes together
+// with ErrBodyTooLarge, so the caller can keep a prefix as evidence.
+func (c *Client) GetRaw(ctx context.Context, url string, header http.Header, maxBytes int64) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	for k, values := range header {
+		for _, v := range values {
+			req.Header.Add(k, v)
+		}
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.Do(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
+		return nil, &StatusError{Status: resp.StatusCode, Body: strings.TrimSpace(string(body))}
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+	if int64(len(body)) > maxBytes {
+		return body[:maxBytes], ErrBodyTooLarge
+	}
+	return body, nil
+}
+
 type StatusError struct {
 	Status int
 	Body   string

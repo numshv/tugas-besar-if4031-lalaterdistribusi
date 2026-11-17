@@ -164,6 +164,10 @@ services:
       MONGO_DB: ${MONGO_DB}
       KAFKA_BROKERS: ${KAFKA_BROKERS}
       KAFKA_TOPIC: ${KAFKA_TOPIC}
+      AUDIT_TOKEN: ${AUDIT_TOKEN:-}
+      AUTH_JWKS_URL: ${AUTH_JWKS_URL}
+      JWT_ISSUER: ${JWT_ISSUER}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-client-api}
     networks: [app-net, store-net]
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${AGGREGATOR_PORT}/health >/dev/null 2>&1 || exit 1"]

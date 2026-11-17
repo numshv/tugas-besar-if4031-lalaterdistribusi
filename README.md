@@ -415,6 +415,75 @@ $DC logs bmkg-mock pvmbg-mock aggregator consumer-dashboard consumer-notifier co
 
 The same ID appears in the source mock, the aggregator's outbound calls, and every consumer.
 
+### M2 Problem 3: schema changes and the dead letter queue
+
+**Declared schema policy.** The aggregator accepts a change automatically when it
+does not touch a field the mapper requires: a new field, a missing optional field, or
+fields in a different order. A change to a required field (renamed, different type, or
+missing) is not guessed. The record is parked with reason `schema_incompatible` until
+Ops adapt the mapping rules. Required fields are `report_id`, `volcano_id`,
+`alert_level`, `reported_at` (PVMBG) and `event_id`, `magnitude`, `occurred_at` (BMKG).
+
+| PVMBG mock version | Change | Aggregator |
+| --- | --- | --- |
+| `2` | `confidence_level` added | accepted, kept in `attributes` |
+| `6` | `ash_column_height_m` removed | accepted |
+| `3` | `alert_level` renamed to `level` | parked |
+| `4` | `alert_level` becomes a number | parked |
+| `5` | `reported_at` removed | parked |
+
+**What is set aside, and how.**
+
+| Failure | Status | `retryable` | What happens next |
+| --- | --- | --- | --- |
+| Response cannot be read (truncated, invalid UTF-8, nested > 32, larger than 4 MiB) | `parked` | `false` | Whole body kept; the poll window is fetched again |
+| One record does not match the contract | `parked` | `false` | Only that record is kept; the rest of the response is stored |
+| Storage or Kafka unavailable | `retrying` | `true` | Retried after 1 s, 2 s, 4 s, ... up to 5 min; parked after 8 attempts |
+
+Messages are stored once (the id is a hash of the content) in the aggregator's
+`unprocessed` collection. Only the assistants' audit token or an Internal Ops JWT can
+read them. Media and Field tokens get 403.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /internal/audit/unprocessed?source=&limit=&cursor=` | Lampiran A listing (retrying and parked) |
+| `GET /internal/ops/unprocessed/{message_id}` | One message with its exact payload |
+| `POST /internal/ops/replay?source=PVMBG` | Reprocess every parked message of a source, oldest first |
+
+**Scenario** (Kubernetes, through the ingress on port 8090):
+
+```bash
+GW=http://localhost:8090
+kubectl -n sistem-informasi-kebencanaan-bnpb port-forward svc/pvmbg-mock 8082:8082 &
+PVMBG=http://localhost:8082
+OPS=$(curl -s -X POST "$GW/login" -H 'Content-Type: application/json' \
+  -d "{\"username\":\"$CLIENT_OPS_ID\",\"password\":\"$CLIENT_OPS_SECRET\"}" | field access_token)
+
+# 1. Incompatible change: records are parked, other sources keep flowing
+curl -s -X POST -H "$ADMIN" -d '{"version":3}' "$PVMBG/admin/schema-version"
+sleep 15
+curl -s -H "Authorization: Bearer $AUDIT_TOKEN" "$GW/internal/audit/unprocessed?source=PVMBG"
+
+# 2. Broken payloads: nothing crashes, the next responses are processed
+for k in truncated deep invalid_utf8 oversize; do
+  curl -s -X POST -H "$ADMIN" -d "{\"kind\":\"$k\",\"count\":1}" "$PVMBG/admin/corrupt"; sleep 5
+done
+kubectl -n sistem-informasi-kebencanaan-bnpb get pods -l app=aggregator   # RESTARTS stays 0
+
+# 3. Only Internal Ops may look
+code -H "Authorization: Bearer $MEDIA" "$GW/internal/audit/unprocessed"   # 403
+
+# 4. Adapt the system, then replay: everything recovers, no duplicates
+cp deploy/k8s/base/aggregator/mapping-rules.example.json deploy/k8s/base/aggregator/mapping-rules.json
+bash scripts/deploy.sh dev            # new ConfigMap hash restarts the aggregator
+curl -s -X POST -H "Authorization: Bearer $OPS" "$GW/internal/ops/replay?source=PVMBG"
+curl -s -H "Authorization: Bearer $AUDIT_TOKEN" "$GW/internal/audit/unprocessed?source=PVMBG"
+```
+
+After the replay only the four broken responses from step 2 are still listed. Their
+bytes can never be read, so they stay parked as evidence; the data they should have
+carried was fetched again by the next poll.
+
 ## Configuration
 
 ### Ports

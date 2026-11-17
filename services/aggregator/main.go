@@ -10,17 +10,19 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
-	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/hazard"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/httpx"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/jwtauth"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/logging"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/api"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/dlq"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/mapper"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/pipeline"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/poller"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/publisher"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/schema"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/store"
 )
 
@@ -67,11 +69,30 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("init volcano resolver: %w", err)
 	}
 
+	dlqStore := dlq.NewMongoStore(mongoClient, cfg.MongoDB)
+	dlqIndexCtx, cancelDLQIndexes := context.WithTimeout(ctx, 10*time.Second)
+	if err := dlqStore.EnsureIndexes(dlqIndexCtx); err != nil {
+		cancelDLQIndexes()
+		return fmt.Errorf("ensure dlq indexes: %w", err)
+	}
+	cancelDLQIndexes()
+
+	rules, err := schema.Load(cfg.MappingRulesFile)
+	if err != nil {
+		return err
+	}
+	log.Info("mapping rules loaded", "file", cfg.MappingRulesFile, "sources", len(rules))
+
 	kafkaPub := publisher.NewKafkaPublisher(cfg.KafkaBrokers, cfg.KafkaTopic)
 	defer kafkaPub.Close()
 
 	policy := mapper.ParsePolicy(cfg.UnknownFieldPolicy)
 	httpTimeout := cfg.HTTPTimeout
+
+	pipe := &pipeline.Pipeline{
+		Store: mongoStore, Pub: kafkaPub, DLQ: dlqStore, Rules: rules,
+		Resolver: volcanoResolver, Policy: policy, Log: log,
+	}
 
 	bmkgClient := poller.SourceClient{
 		HTTP:    httpx.NewClient(cfg.BMKGBaseURL, httpTimeout, log),
@@ -84,54 +105,23 @@ func run(log *slog.Logger) error {
 		Header:  http.Header{"Authorization": {"Bearer " + cfg.PVMBGToken}},
 	}
 
-	retryQ := newPublishRetryQueue(500)
-
 	p := poller.New(log, cfg.PollInterval, httpTimeout, bmkgClient, pvmbgClient,
-		func(ctx context.Context, events, warnings []map[string]any) error {
-			hazards, mapErrs := mapper.MapSeismic(events, warnings, policy)
-			return persistAndPublish(ctx, mongoStore, kafkaPub, retryQ, hazards, mapErrs, log)
-		},
-		func(ctx context.Context, reports []map[string]any) error {
-			hazards, mapErrs := mapper.MapVolcanic(reports, volcanoResolver, policy)
-			return persistAndPublish(ctx, mongoStore, kafkaPub, retryQ, hazards, mapErrs, log)
-		},
-	)
+		pipe.IngestBMKG, pipe.IngestPVMBG)
 
 	go p.Run(ctx)
+	go pipe.RunRetrier(ctx, 2*time.Second)
 
-	go func() {
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				retryQ.flush(ctx, kafkaPub, log)
-			}
-		}
-	}()
+	ops := &api.Ops{DLQ: dlqStore, Replayer: pipe, AuditToken: cfg.AuditToken}
+	if cfg.JWKSURL != "" {
+		keys := jwtauth.NewBackgroundKeyProvider(ctx, cfg.JWKSURL, log, time.Minute)
+		ops.Verifier = &jwtauth.Verifier{Keys: keys, Issuer: cfg.JWTIssuer, Audience: cfg.JWTAudience}
+	}
+	if cfg.AuditToken == "" && ops.Verifier == nil {
+		log.Warn("neither AUDIT_TOKEN nor AUTH_JWKS_URL is set; dead letter endpoints reject every request")
+	}
 
-	handler := api.New(mongoStore, p, log, cfg.MaxConcurrency)
+	handler := api.New(mongoStore, p, log, cfg.MaxConcurrency, ops)
 	return httpx.ListenAndServe(ctx, ":"+cfg.Port, httpx.Middleware(log)(handler), log)
-}
-
-func persistAndPublish(ctx context.Context, s store.Store, pub publisher.Publisher, retryQ *publishRetryQueue, events []hazard.Event, mapErrs []error, log *slog.Logger) error {
-	for _, me := range mapErrs {
-		log.WarnContext(ctx, "skipping malformed record", "error", me)
-	}
-
-	for _, e := range events {
-		if err := s.Upsert(ctx, e); err != nil {
-			return fmt.Errorf("upsert %s: %w", e.HazardID, err)
-		}
-		if err := pub.Publish(ctx, e); err != nil {
-			log.ErrorContext(ctx, "publish failed, queued for retry", "hazard_id", e.HazardID, "error", err)
-			retryQ.enqueue(e, log)
-			continue
-		}
-	}
-	return nil
 }
 
 type config struct {
@@ -151,6 +141,12 @@ type config struct {
 
 	KafkaBrokers []string
 	KafkaTopic   string
+
+	MappingRulesFile string
+	AuditToken       string
+	JWKSURL          string
+	JWTIssuer        string
+	JWTAudience      string
 }
 
 func loadConfig() (config, error) {
@@ -168,6 +164,11 @@ func loadConfig() (config, error) {
 		MongoDB:            os.Getenv("MONGO_DB"),
 		KafkaBrokers:       strings.Split(os.Getenv("KAFKA_BROKERS"), ","),
 		KafkaTopic:         os.Getenv("KAFKA_TOPIC"),
+		MappingRulesFile:   os.Getenv("MAPPING_RULES_FILE"),
+		AuditToken:         os.Getenv("AUDIT_TOKEN"),
+		JWKSURL:            os.Getenv("AUTH_JWKS_URL"),
+		JWTIssuer:          os.Getenv("JWT_ISSUER"),
+		JWTAudience:        os.Getenv("JWT_AUDIENCE"),
 	}
 	// fail fast: jangan sampai service nyala tapi diam-diam tidak bisa
 	// otentikasi ke BMKG/PVMBG, ketahuan baru saat poll pertama gagal
@@ -198,52 +199,4 @@ func envSeconds(key string, fallback int) time.Duration {
 }
 func envMillis(key string, fallback int) time.Duration {
 	return time.Duration(envInt(key, fallback)) * time.Millisecond
-}
-
-type publishRetryQueue struct {
-	mu    sync.Mutex
-	items []hazard.Event
-	max   int
-}
-
-func newPublishRetryQueue(max int) *publishRetryQueue {
-	return &publishRetryQueue{max: max}
-}
-
-func (q *publishRetryQueue) enqueue(e hazard.Event, log *slog.Logger) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if len(q.items) >= q.max {
-		log.Warn("publish retry queue full, dropping oldest pending event",
-			"dropped_hazard_id", q.items[0].HazardID)
-		q.items = q.items[1:]
-	}
-	q.items = append(q.items, e)
-}
-
-func (q *publishRetryQueue) flush(ctx context.Context, pub publisher.Publisher, log *slog.Logger) {
-	q.mu.Lock()
-	pending := q.items
-	q.items = nil
-	q.mu.Unlock()
-
-	if len(pending) == 0 {
-		return
-	}
-
-	var stillFailing []hazard.Event
-	for _, e := range pending {
-		if err := pub.Publish(ctx, e); err != nil {
-			log.WarnContext(ctx, "retry publish failed again", "hazard_id", e.HazardID, "error", err)
-			stillFailing = append(stillFailing, e)
-			continue
-		}
-		log.InfoContext(ctx, "retry publish succeeded", "hazard_id", e.HazardID)
-	}
-
-	if len(stillFailing) > 0 {
-		q.mu.Lock()
-		q.items = append(stillFailing, q.items...)
-		q.mu.Unlock()
-	}
 }
