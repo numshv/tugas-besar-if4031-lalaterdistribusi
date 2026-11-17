@@ -42,6 +42,13 @@ spec:
                 name: aggregator
                 port:
                   number: 8083
+          - path: /field-reports
+            pathType: Prefix
+            backend:
+              service:
+                name: field-report-api
+                port:
+                  number: 8085
           - path: /
             pathType: Prefix
             backend:

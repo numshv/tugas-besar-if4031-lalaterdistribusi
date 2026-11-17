@@ -19,6 +19,8 @@ images:
     newTag: dev
   - name: bnpb/consumer-regional
     newTag: dev
+  - name: bnpb/field-report-api
+    newTag: dev
 components:
   - mongo-delete-replicas
 patches:
