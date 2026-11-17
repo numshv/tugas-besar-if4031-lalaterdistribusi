@@ -108,8 +108,8 @@ label_slots() {
 
 apply_manifests() {
   step "apply overlay $MODE"
-  # Jobs are immutable; finished ones are deleted so the new spec can run (both are idempotent).
-  kubectl -n "$NS" delete job -l "$PART_OF" --field-selector status.successful=1 --ignore-not-found
+  # Jobs are immutable, so they are recreated on every deploy; all of them are idempotent.
+  kubectl -n "$NS" delete job -l "$PART_OF" --ignore-not-found
 
   local allow=() kind
   for kind in "${PRUNE_KINDS[@]}"; do allow+=("--prune-allowlist=$kind"); done
