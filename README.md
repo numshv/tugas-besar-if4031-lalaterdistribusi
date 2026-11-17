@@ -484,6 +484,40 @@ After the replay only the four broken responses from step 2 are still listed. Th
 bytes can never be read, so they stay parked as evidence; the data they should have
 carried was fetched again by the next poll.
 
+### M2 Problem 3: field reports
+
+Tim Lapangan sends reports to `POST /field-reports` (served by `field-report-api`).
+The `Idempotency-Key` header is required: the client creates one key per report and
+reuses it on every retry. The key becomes the `report_id`.
+
+```bash
+curl -s -X POST "$GW/field-reports" -H "Authorization: Bearer $FIELD" \
+  -H "Idempotency-Key: $(uuidgen)" -H 'Content-Type: application/json' \
+  -d '{"hazard_type":"VOLCANIC","latitude":-7.54,"longitude":110.44,
+       "observed_at":"2026-11-18T08:00:00Z","description":"hujan abu di desa"}'
+curl -s "$GW/field-reports/<report_id>" -H "Authorization: Bearer $FIELD"   # pending or processed
+```
+
+| Field | Rule |
+| --- | --- |
+| `hazard_type` | `SEISMIC`, `VOLCANIC`, `WILDFIRE` or `COASTAL` |
+| `latitude`, `longitude` | required, valid coordinates |
+| `observed_at` | required, RFC 3339 |
+| `description` | required, at most 2000 characters |
+| `area_name`, `severity_estimate` | optional |
+
+**Delivery guarantee.** `202` is sent only after Kafka acknowledged the report with
+`acks=all`; if Kafka does not answer within 3 s the client gets `503` and retries with
+the same key. The aggregator reads the topic with at-least-once delivery (the offset
+is committed only after the report is stored, and a failing store is retried, never
+skipped) and stores idempotently (`report_id` is the document id, written only on
+insert). Together: every report that got `202` is processed exactly once in effect.
+Only `field` and `internal` scopes may send; `media` gets 403.
+
+`scripts/verify-field-reports.sh [count]` scales the aggregator to 0, sends reports
+while deleting a `field-report-api` pod every 3 s, resends some with the same key,
+brings the aggregator back and checks that every accepted report is stored once.
+
 ## Configuration
 
 ### Ports
