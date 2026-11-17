@@ -1,11 +1,5 @@
-// Package dlq is the dead letter queue for upstream messages the aggregator
-// could not process. Every message is kept byte for byte with its reason,
-// source and receive time.
-//
-// A message is either retrying (a transient failure; the retrier tries again
-// with exponential backoff) or parked (it will not succeed until the system
-// changes; Ops adapt the system and replay it). Recovered messages are kept
-// for the audit trail but no longer reported as unprocessed.
+// Package dlq is the dead letter queue: messages the aggregator could not process,
+// kept byte for byte. Recovered messages stay for the audit trail.
 package dlq
 
 import (
@@ -27,17 +21,13 @@ const (
 	StatusRecovered Status = "recovered"
 )
 
-// Kind says what Payload holds.
 type Kind string
 
 const (
-	// KindResponse is a whole upstream response that could not be read at all.
-	KindResponse Kind = "response"
-	// KindRecord is one record of a readable response.
-	KindRecord Kind = "record"
+	KindResponse Kind = "response" // a whole response that could not be read
+	KindRecord   Kind = "record"
 )
 
-// Retry policy for transient failures.
 const (
 	MaxAttempts  = 8
 	BaseBackoff  = time.Second
@@ -69,8 +59,7 @@ type Message struct {
 	CorrelationID    string     `bson:"correlation_id,omitempty"`
 }
 
-// NewID derives the message id from its content, so the same message received
-// twice (polls overlap by a couple of seconds) is stored once.
+// NewID is content based because polls overlap and the same message arrives twice.
 func NewID(source string, kind Kind, payload []byte) string {
 	h := sha256.New()
 	h.Write([]byte(source))
@@ -81,7 +70,6 @@ func NewID(source string, kind Kind, payload []byte) string {
 	return "msg-" + hex.EncodeToString(h.Sum(nil))[:24]
 }
 
-// Backoff returns the delay before attempt number attempts+1.
 func Backoff(attempts int) time.Duration {
 	d := BaseBackoff
 	for i := 1; i < attempts && d < MaxBackoff; i++ {
@@ -90,7 +78,7 @@ func Backoff(attempts int) time.Duration {
 	return min(d, MaxBackoff)
 }
 
-// ReportedStatus is the status shown by the audit API (retrying or parked).
+// ReportedStatus maps to the two statuses the audit contract knows.
 func (m Message) ReportedStatus() Status {
 	if m.Status == StatusReplaying {
 		return StatusParked
@@ -98,7 +86,6 @@ func (m Message) ReportedStatus() Status {
 	return m.Status
 }
 
-// Cursor is a position in the (received_at, id) order.
 type Cursor struct {
 	ReceivedAt time.Time `json:"r"`
 	ID         string    `json:"i"`
@@ -121,19 +108,14 @@ func DecodeCursor(s string) (Cursor, error) {
 	return c, nil
 }
 
-// Store persists messages. Claims are atomic so several aggregator replicas
-// never process the same message at once.
+// Store claims are atomic so several aggregator replicas never process the same message.
 type Store interface {
-	// Put inserts m unless a message with the same id exists. It reports whether it inserted.
-	Put(ctx context.Context, m Message) (bool, error)
+	Put(ctx context.Context, m Message) (inserted bool, err error)
 	Get(ctx context.Context, id string) (Message, error)
-	// ClaimDue claims the retrying message whose next attempt is earliest and due.
 	ClaimDue(ctx context.Context, now time.Time) (*Message, error)
-	// ClaimParked claims the oldest parked message of source not touched since passStart.
+	// ClaimParked skips messages touched since passStart, so one replay pass sees each message once.
 	ClaimParked(ctx context.Context, source string, passStart, now time.Time) (*Message, error)
 	MarkRecovered(ctx context.Context, id string, at time.Time) error
-	// MarkFailed records a failed attempt and the new status.
 	MarkFailed(ctx context.Context, id string, reason string, retryable bool, status Status, attempts int, next, now time.Time) error
-	// List returns retrying and parked messages in (received_at, id) order after cursor.
 	List(ctx context.Context, source string, after *Cursor, limit int) ([]Message, error)
 }

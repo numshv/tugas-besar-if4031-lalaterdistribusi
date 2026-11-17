@@ -1,7 +1,4 @@
 // Package jwtauth verifies access tokens issued by auth-service.
-//
-// The public key comes from auth-service's JWKS endpoint, so a service that
-// verifies tokens never reads auth-service's key files directly.
 package jwtauth
 
 import (
@@ -21,7 +18,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// Scopes issued by auth-service.
 const (
 	ScopeMedia    = "media"
 	ScopeField    = "field"
@@ -30,7 +26,6 @@ const (
 
 var ErrInvalidToken = errors.New("token is invalid or expired")
 
-// KeyProvider holds auth-service's RSA public key, fetched from its JWKS endpoint.
 type KeyProvider struct {
 	mu        sync.RWMutex
 	publicKey *rsa.PublicKey
@@ -38,7 +33,6 @@ type KeyProvider struct {
 	client    *http.Client
 }
 
-// NewKeyProvider fetches the key once and fails if that is not possible.
 func NewKeyProvider(ctx context.Context, jwksURL string) (*KeyProvider, error) {
 	kp := &KeyProvider{jwksURL: jwksURL, client: &http.Client{Timeout: 5 * time.Second}}
 	if err := kp.refresh(ctx); err != nil {
@@ -69,7 +63,6 @@ func NewBackgroundKeyProvider(ctx context.Context, jwksURL string, log *slog.Log
 	return kp
 }
 
-// NewStaticKeyProvider is for tests.
 func NewStaticKeyProvider(pub *rsa.PublicKey) *KeyProvider {
 	return &KeyProvider{publicKey: pub}
 }
@@ -137,14 +130,12 @@ func (kp *KeyProvider) StartAutoRefresh(ctx context.Context, log *slog.Logger, i
 	}()
 }
 
-// Verifier checks signature, issuer, audience, expiry and token type.
 type Verifier struct {
 	Keys     *KeyProvider
 	Issuer   string
 	Audience string
 }
 
-// Verify returns the token's scope and subject.
 func (v Verifier) Verify(token string) (scope, subject string, err error) {
 	claims := jwt.MapClaims{}
 	parsed, err := jwt.ParseWithClaims(token, claims, func(t *jwt.Token) (any, error) {
@@ -170,7 +161,6 @@ func (v Verifier) Verify(token string) (scope, subject string, err error) {
 	return "", "", ErrInvalidToken
 }
 
-// BearerToken extracts the token from an Authorization header.
 func BearerToken(header string) (string, bool) {
 	parts := strings.Fields(header)
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {

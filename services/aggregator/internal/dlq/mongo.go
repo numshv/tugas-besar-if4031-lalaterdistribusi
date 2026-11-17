@@ -11,7 +11,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// MongoStore keeps messages in the aggregator's "unprocessed" collection.
 type MongoStore struct {
 	col *mongo.Collection
 }

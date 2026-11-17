@@ -1,20 +1,6 @@
-// Package pipeline turns raw upstream responses into stored and published
-// HazardEvents, and sets aside whatever cannot be processed.
-//
-// Failure handling, from the outside in:
-//   - A response that cannot be read at all (truncated, invalid UTF-8, too deep,
-//     too large) is parked whole, and the poll fails so the poller fetches the
-//     same window again.
-//   - A readable response is split into records. A record whose shape does not
-//     match the contract (schema_incompatible) is parked on its own; the other
-//     records are still processed.
-//   - A record that fails because storage or Kafka is unavailable is set to
-//     retrying; the retrier tries again with exponential backoff and parks it
-//     after dlq.MaxAttempts.
-//   - If the DLQ itself cannot be written, the poll fails, so nothing is lost.
-//
-// Replaying a record is safe to repeat: hazard_id is derived from the source's
-// id, so storing the same record twice overwrites the same document.
+// Package pipeline turns raw upstream responses into HazardEvents and sets aside
+// what cannot be processed. Replays are safe to repeat because hazard_id is
+// derived from the source's id.
 package pipeline
 
 import (
@@ -36,14 +22,12 @@ import (
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/store"
 )
 
-// Upstream paths, recorded on response-level messages.
 const (
 	PathVolcanic = "/volcanic-reports"
 	PathSeismic  = "/seismic-events"
 	PathTsunami  = "/tsunami-warnings"
 )
 
-// Response is one upstream HTTP response body.
 type Response struct {
 	Path       string
 	Body       []byte
@@ -51,7 +35,6 @@ type Response struct {
 	ReceivedAt time.Time
 }
 
-// Failure is a record or response that could not be processed.
 type Failure struct {
 	Reason    string
 	Retryable bool
@@ -86,7 +69,6 @@ func (p *Pipeline) now() time.Time {
 	return time.Now().UTC()
 }
 
-// IngestPVMBG processes one /volcanic-reports response.
 func (p *Pipeline) IngestPVMBG(ctx context.Context, r Response) error {
 	items, err := p.split(ctx, hazard.SourcePVMBG, r)
 	if err != nil {
@@ -101,14 +83,13 @@ func (p *Pipeline) IngestPVMBG(ctx context.Context, r Response) error {
 	return nil
 }
 
-// bmkgRecord is what a BMKG record message holds: the seismic event exactly as
-// received and the tsunami warning that referred to it, if any.
+// bmkgRecord keeps a seismic event together with its tsunami warning, because
+// severity depends on both.
 type bmkgRecord struct {
 	Event   json.RawMessage `json:"event"`
 	Warning json.RawMessage `json:"warning"`
 }
 
-// IngestBMKG processes one pair of /seismic-events and /tsunami-warnings responses.
 func (p *Pipeline) IngestBMKG(ctx context.Context, events, warnings Response) error {
 	eventItems, err := p.split(ctx, hazard.SourceBMKG, events)
 	if err != nil {
@@ -141,8 +122,8 @@ func (p *Pipeline) IngestBMKG(ctx context.Context, events, warnings Response) er
 	return nil
 }
 
-// split checks a response and splits it into records. A response that cannot be
-// read is parked whole and reported as ErrMalformedResponse.
+// split parks an unreadable response whole and fails, so the poller fetches the
+// same window again.
 func (p *Pipeline) split(ctx context.Context, source hazard.Source, r Response) ([]json.RawMessage, error) {
 	var items []json.RawMessage
 	var err error
@@ -209,8 +190,7 @@ func (p *Pipeline) persist(ctx context.Context, ev hazard.Event) *Failure {
 	return nil
 }
 
-// safely turns a panic while processing one record into a parked failure, so
-// one bad record can never take the aggregator down.
+// safely keeps one bad record from taking the aggregator down.
 func (p *Pipeline) safely(fn func() *Failure) (f *Failure) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -264,7 +244,6 @@ func refHint(item json.RawMessage, field string) string {
 	return s
 }
 
-// Reprocess runs a stored message through the pipeline again.
 func (p *Pipeline) Reprocess(ctx context.Context, m dlq.Message) *Failure {
 	return p.safely(func() *Failure {
 		switch m.Kind {
@@ -283,9 +262,6 @@ func (p *Pipeline) Reprocess(ctx context.Context, m dlq.Message) *Failure {
 	})
 }
 
-// reprocessResponse succeeds only if the stored body is now readable, for
-// example after the size limit was raised. Its records are then processed
-// like any fresh response.
 func (p *Pipeline) reprocessResponse(ctx context.Context, m dlq.Message) *Failure {
 	if m.PayloadTruncated {
 		return &Failure{Reason: m.Reason + " (only a prefix was kept)"}
@@ -307,8 +283,7 @@ func (p *Pipeline) reprocessResponse(ctx context.Context, m dlq.Message) *Failur
 			payload, _ = json.Marshal(bmkgRecord{Event: item})
 			f = p.processBMKG(ctx, payload, m.ReceivedAt)
 		default:
-			// Tsunami warnings only make sense next to their seismic event, which
-			// the poller fetches again; nothing is lost by not replaying them alone.
+			// Warnings alone are meaningless; the poller refetches them with their events.
 			continue
 		}
 		if err := p.setAsideRecord(ctx, hazard.Source(m.Source), payload, ref, m.ReceivedAt, f); err != nil {
@@ -318,7 +293,6 @@ func (p *Pipeline) reprocessResponse(ctx context.Context, m dlq.Message) *Failur
 	return nil
 }
 
-// RunRetrier retries due messages until ctx is done.
 func (p *Pipeline) RunRetrier(ctx context.Context, interval time.Duration) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
@@ -332,7 +306,6 @@ func (p *Pipeline) RunRetrier(ctx context.Context, interval time.Duration) {
 	}
 }
 
-// RetryDue retries at most max due messages and returns how many it handled.
 func (p *Pipeline) RetryDue(ctx context.Context, max int) int {
 	n := 0
 	for ; n < max; n++ {
@@ -351,7 +324,6 @@ func (p *Pipeline) RetryDue(ctx context.Context, max int) int {
 	return n
 }
 
-// settle records the outcome of one attempt.
 func (p *Pipeline) settle(ctx context.Context, m dlq.Message, f *Failure, replay bool) {
 	now := p.now()
 	if f == nil {
@@ -375,7 +347,6 @@ func (p *Pipeline) settle(ctx context.Context, m dlq.Message, f *Failure, replay
 		"status", status, "attempts", attempts, "reason", f.Reason)
 }
 
-// ReplayResult summarises one replay pass.
 type ReplayResult struct {
 	Source    string `json:"source"`
 	Replayed  int    `json:"replayed"`
@@ -384,9 +355,8 @@ type ReplayResult struct {
 	Skipped   int    `json:"skipped_behind_failed"`
 }
 
-// Replay reprocesses every parked message of source once, oldest first. When a
-// message fails, later messages with the same source_ref_id are left parked so
-// an older version is never applied after a newer one.
+// Replay reprocesses parked messages oldest first. Once a message fails, later
+// ones with the same source_ref_id stay parked so order per source_ref_id holds.
 func (p *Pipeline) Replay(ctx context.Context, source string) (ReplayResult, error) {
 	p.replayMu.Lock()
 	defer p.replayMu.Unlock()

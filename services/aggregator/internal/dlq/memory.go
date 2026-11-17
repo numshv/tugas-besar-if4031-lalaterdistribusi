@@ -35,7 +35,6 @@ func (s *MemoryStore) Get(_ context.Context, id string) (Message, error) {
 	return m, nil
 }
 
-// All returns every message, ordered by (received_at, id).
 func (s *MemoryStore) All() []Message {
 	s.mu.Lock()
 	defer s.mu.Unlock()

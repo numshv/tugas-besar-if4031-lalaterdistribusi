@@ -10,7 +10,6 @@ import (
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/httpx"
 )
 
-// Kinds of broken response bodies POST /admin/corrupt can schedule.
 const (
 	CorruptTruncated   = "truncated"    // valid JSON cut in half
 	CorruptDeep        = "deep"         // arrays nested corruptDepth levels deep
@@ -37,7 +36,6 @@ func (c *corruption) set(kind string, count int) {
 	c.kind, c.remaining = kind, count
 }
 
-// take returns the kind to apply to the next response, or "" when none is pending.
 func (c *corruption) take() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -57,7 +55,6 @@ func (c *corruption) status() map[string]any {
 	return map[string]any{"kind": c.kind, "remaining": c.remaining}
 }
 
-// corruptBody renders payload, then breaks it according to kind.
 func corruptBody(kind string, payload []map[string]any) []byte {
 	switch kind {
 	case CorruptTruncated:

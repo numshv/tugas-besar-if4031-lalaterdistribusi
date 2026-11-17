@@ -1,9 +1,5 @@
-// Package satfeed reads the assistant's Feed Satelit (Server-Sent Events).
-//
-// Numbers in a detection are kept as json.Number so the detection key is built
-// from the exact text the feed sent. update and retract events reference a
-// detection by that text (for example acq_time "6", not "0006"), so formatting
-// a parsed float would produce a key that no longer matches.
+// Package satfeed reads the Feed Satelit SSE stream. Numbers stay json.Number
+// because update and retract reference a detection by the feed's exact text.
 package satfeed
 
 import (
@@ -23,7 +19,6 @@ const (
 	TypeHeartbeat = "heartbeat"
 )
 
-// Event is one raw SSE event.
 type Event struct {
 	ID   string
 	Type string
@@ -33,8 +28,6 @@ type Event struct {
 // maxEventBytes bounds a single SSE line so a broken stream cannot exhaust memory.
 const maxEventBytes = 1 << 20
 
-// ReadEvents parses an SSE stream and calls fn for every complete event.
-// It returns when the stream ends, fn returns an error, or a read fails.
 func ReadEvents(r io.Reader, fn func(Event) error) error {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64*1024), maxEventBytes)
@@ -78,7 +71,6 @@ func ReadEvents(r io.Reader, fn func(Event) error) error {
 	return sc.Err()
 }
 
-// Detection is one VIIRS hotspot row.
 type Detection struct {
 	Satellite  string      `json:"satellite"`
 	AcqDate    string      `json:"acq_date"`
@@ -119,7 +111,6 @@ func DetectionTime(acqDate, acqTime string) (time.Time, error) {
 	return day.Add(time.Duration(hhmm/100)*time.Hour + time.Duration(hhmm%100)*time.Minute), nil
 }
 
-// KeyTime extracts the detection time from a detection key.
 func KeyTime(key string) (time.Time, error) {
 	parts := strings.Split(key, "|")
 	if len(parts) != 5 {
@@ -128,27 +119,23 @@ func KeyTime(key string) (time.Time, error) {
 	return DetectionTime(parts[1], parts[2])
 }
 
-// DetectionData is the payload of a detection event.
 type DetectionData struct {
 	Offset    int64     `json:"offset"`
 	Detection Detection `json:"detection"`
 }
 
-// UpdateData is the payload of an update event: changed fields of an existing detection.
 type UpdateData struct {
 	Offset  int64                      `json:"offset"`
 	Key     string                     `json:"key"`
 	Changes map[string]json.RawMessage `json:"changes"`
 }
 
-// RetractData is the payload of a retract event: the detection is withdrawn.
 type RetractData struct {
 	Offset int64  `json:"offset"`
 	Key    string `json:"key"`
 	Reason string `json:"reason"`
 }
 
-// Session is the response of GET /v1/session.
 type Session struct {
 	Group        string    `json:"group"`
 	Profile      string    `json:"profile"`

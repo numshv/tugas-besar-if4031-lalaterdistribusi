@@ -1,11 +1,5 @@
-// Package schema holds the mapping rules Ops use to adapt to an upstream schema
-// change without rebuilding the aggregator.
-//
-// Rules live in a JSON file mounted from a ConfigMap. Changing the ConfigMap
-// restarts the pods (Kustomize hashes its name), after which Ops replay the
-// parked messages. Only three simple adaptations are supported on purpose:
-// renaming a field, translating values and filling a missing field. Anything
-// more complex is a code change.
+// Package schema holds mapping rules from a ConfigMap, so Ops adapt to a simple
+// upstream schema change without a rebuild. Anything more complex is a code change.
 //
 //	{
 //	  "PVMBG": {
@@ -27,23 +21,18 @@ import (
 	"time"
 )
 
-// ReceivedAt is the default value that stands for the time BNPB received the message.
 const ReceivedAt = "$received_at"
 
-// SourceRules adapt one source's records.
 type SourceRules struct {
-	// Rename maps an upstream field name to the name the mapper expects.
-	Rename map[string]string `json:"rename,omitempty"`
-	// Values translates a field's value, keyed by the value's text form.
-	Values map[string]map[string]any `json:"values,omitempty"`
-	// Defaults fills a field that is missing. "$received_at" uses the receive time.
-	Defaults map[string]string `json:"defaults,omitempty"`
+	Rename   map[string]string         `json:"rename,omitempty"`
+	Values   map[string]map[string]any `json:"values,omitempty"` // keyed by the value's text form
+	Defaults map[string]string         `json:"defaults,omitempty"`
 }
 
-// Rules are keyed by HazardEvent source (BMKG, PVMBG, ...).
+// Rules are keyed by source (BMKG, PVMBG, ...).
 type Rules map[string]SourceRules
 
-// Load reads rules from path. An empty path or a missing file means no rules.
+// Load treats an empty path or a missing file as no rules.
 func Load(path string) (Rules, error) {
 	if path == "" {
 		return Rules{}, nil
@@ -58,7 +47,6 @@ func Load(path string) (Rules, error) {
 	return Parse(b)
 }
 
-// Parse decodes rules from JSON.
 func Parse(b []byte) (Rules, error) {
 	var r Rules
 	if err := json.Unmarshal(b, &r); err != nil {
@@ -70,7 +58,7 @@ func Parse(b []byte) (Rules, error) {
 	return r, nil
 }
 
-// Apply returns a copy of raw adapted by the source's rules. raw is not modified.
+// Apply returns an adapted copy; raw itself is kept intact for the DLQ.
 func (r Rules) Apply(source string, raw map[string]any, receivedAt time.Time) map[string]any {
 	sr, ok := r[source]
 	if !ok {
