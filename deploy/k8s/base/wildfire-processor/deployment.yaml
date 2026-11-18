@@ -1,6 +1,7 @@
 # One replica: the feed allows one connection per group and kicks the older
 # one. Recreate stops the old pod before the new one connects. After a node
-# failure the pod is rescheduled after 30 s and rebuilds from feed offset 0.
+# failure the pod is rescheduled after 30 s and resumes from the snapshot in
+# Kafka (or replays the feed from offset 0 when there is none).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -22,7 +23,7 @@ spec:
         prometheus.io/port: "8086"
         prometheus.io/path: /metrics
     spec:
-      terminationGracePeriodSeconds: 10
+      terminationGracePeriodSeconds: 30
       tolerations:
         - key: node.kubernetes.io/not-ready
           operator: Exists

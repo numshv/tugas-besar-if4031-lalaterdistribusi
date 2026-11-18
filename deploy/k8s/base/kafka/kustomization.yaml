@@ -28,6 +28,7 @@ configMapGenerator:
       - KAFKA_TOPIC_PARTITIONS=3
       - KAFKA_TOPIC_RETENTION_MS=86400000
       - KAFKA_TOPICS=bnpb.hazard-events.v1:3:86400000,bnpb.hazard-upserts.v1:6:604800000,bnpb.field-reports.v1:3:604800000
+      - KAFKA_COMPACTED_TOPICS=bnpb.wildfire-snapshots.v1:1:68157440
       - KAFKA_HEAP_OPTS=-Xmx128m
     files:
       - create-topics.sh

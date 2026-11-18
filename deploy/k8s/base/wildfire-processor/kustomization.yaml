@@ -14,4 +14,6 @@ configMapGenerator:
       - FLUSH_EVENTS=500
       - FEED_IDLE_TIMEOUT_SECONDS=45
       - VERSION_EPOCH=0
+      - SNAPSHOT_TOPIC=bnpb.wildfire-snapshots.v1
+      - SNAPSHOT_EVERY_SECONDS=60
       - AUTH_JWKS_URL=http://auth-service:8084/.well-known/jwks.json

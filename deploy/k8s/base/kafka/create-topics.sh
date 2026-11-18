@@ -26,3 +26,13 @@ for spec in $(echo "$TOPICS" | tr ',' ' '); do
     --config cleanup.policy=delete
   /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP" --describe --topic "$name"
 done
+
+# Compacted topics keep only the newest message per key (name:partitions:max_message_bytes).
+for spec in $(echo "${KAFKA_COMPACTED_TOPICS:-}" | tr ',' ' '); do
+  name="${spec%%:*}"
+  rest="${spec#*:}"
+  partitions="${rest%%:*}"
+  maxbytes="${rest#*:}"
+  /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP"     --create --if-not-exists     --topic "$name"     --partitions "$partitions"     --replication-factor "$REPLICATION"     --config cleanup.policy=compact     --config max.message.bytes="$maxbytes"
+  /opt/kafka/bin/kafka-topics.sh --bootstrap-server "$BOOTSTRAP" --describe --topic "$name"
+done
