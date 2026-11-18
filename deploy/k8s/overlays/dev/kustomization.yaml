@@ -21,6 +21,8 @@ images:
     newTag: dev
   - name: bnpb/field-report-api
     newTag: dev
+  - name: bnpb/wildfire-processor
+    newTag: dev
 components:
   - mongo-delete-replicas
 patches:
