@@ -16,6 +16,7 @@ import (
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/jwtauth"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/kafkax"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/logging"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/analytics"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/api"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/audit"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/dlq"
@@ -178,6 +179,11 @@ func run(log *slog.Logger) error {
 	root := http.NewServeMux()
 	root.Handle("GET /metrics", promhttp.Handler())
 	root.Handle("/internal/audit/", httpx.Middleware(log)(auditAPI))
+	dashboard := analytics.NewHandler(mongoStore, cfg.AuditIncludeRetracted, log.With("component", "analytics")).
+		Routes(jwtauth.RequireScopes(ops.Verifier, []string{jwtauth.ScopeAnalytics, jwtauth.ScopeInternal},
+			"dashboard analitik hanya untuk analytics-viewer atau BNPB Internal Ops"))
+	root.Handle("/analytics", httpx.Middleware(log)(dashboard))
+	root.Handle("/analytics/", httpx.Middleware(log)(dashboard))
 	root.Handle("/", httpx.Middleware(log)(handler))
 	return httpx.ListenAndServe(ctx, ":"+cfg.Port, root, log)
 }
