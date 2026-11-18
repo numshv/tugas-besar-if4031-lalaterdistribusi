@@ -95,12 +95,17 @@ func run(log *slog.Logger) error {
 	root.Handle("GET /metrics", promhttp.Handler())
 	root.Handle("/", httpx.Middleware(log)(api.Routes(proc, auth)))
 
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		if err := proc.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("processor stopped", "error", err)
 		}
 	}()
-	return httpx.ListenAndServe(ctx, ":"+kafkax.Env("WILDFIRE_PORT", "8086"), root, log)
+	err = httpx.ListenAndServe(ctx, ":"+kafkax.Env("WILDFIRE_PORT", "8086"), root, log)
+	// Wait for the last flush and snapshot before the Kafka writers close.
+	<-done
+	return err
 }
 
 type kafkaPublisher struct {
