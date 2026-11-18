@@ -15,6 +15,7 @@ SECRET_KEYS=(
   CLIENT_MEDIA_SECRET CLIENT_FIELD_SECRET CLIENT_OPS_SECRET
   MONGO_ROOT_PASSWORD MONGO_APP_PASSWORD MONGO_MONITOR_PASSWORD
 )
+OPTIONAL_SECRET_KEYS=(AUDIT_TOKENS SATELLITE_TOKEN)
 PRUNE_KINDS=(
   core/v1/ConfigMap core/v1/Service
   apps/v1/Deployment apps/v1/StatefulSet apps/v1/DaemonSet
@@ -74,6 +75,14 @@ apply_secrets() {
     value="$(env_get "$key")"
     literals+=("--from-literal=$key=$value")
   done
+  for key in "${OPTIONAL_SECRET_KEYS[@]}"; do
+    if ! grep -qE "^$key=" "$ROOT/.env"; then
+      echo "warning: $key not set in .env, skipped"
+      continue
+    fi
+    value="$(env_get "$key")"
+    literals+=("--from-literal=$key=$value")
+  done
   kubectl -n "$NS" create secret generic bnpb-secrets "${literals[@]}" --dry-run=client -o yaml | kubectl apply -f -
 
   bash "$ROOT/scripts/gen-keys.sh"
@@ -108,8 +117,8 @@ label_slots() {
 
 apply_manifests() {
   step "apply overlay $MODE"
-  # Jobs are immutable; finished ones are deleted so the new spec can run (both are idempotent).
-  kubectl -n "$NS" delete job -l "$PART_OF" --field-selector status.successful=1 --ignore-not-found
+  # Jobs are immutable, so they are recreated on every deploy; all of them are idempotent.
+  kubectl -n "$NS" delete job -l "$PART_OF" --ignore-not-found
 
   local allow=() kind
   for kind in "${PRUNE_KINDS[@]}"; do allow+=("--prune-allowlist=$kind"); done
