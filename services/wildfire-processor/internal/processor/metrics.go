@@ -55,6 +55,21 @@ var (
 	publishErrors = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "wildfire_publish_errors_total", Help: "Failed attempts to send to hazard-upserts (retried).",
 	})
+	restoredOffset = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "wildfire_restored_offset", Help: "Feed offset of the snapshot the processor started from (0 = full replay).",
+	})
+	snapshotOffset = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "wildfire_snapshot_offset", Help: "Feed offset of the last saved snapshot.",
+	})
+	snapshotBytes = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "wildfire_snapshot_bytes", Help: "Size of the last saved snapshot.",
+	})
+	snapshotSeconds = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "wildfire_snapshot_seconds", Help: "Time the last snapshot took to save.",
+	})
+	snapshotErrors = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "wildfire_snapshot_errors_total", Help: "Snapshots that could not be saved.",
+	})
 	emitDelay = promauto.NewHistogram(prometheus.HistogramOpts{
 		Name:    "wildfire_emit_delay_seconds",
 		Help:    "From a feed event reaching the processor until Kafka acknowledged the change it caused.",

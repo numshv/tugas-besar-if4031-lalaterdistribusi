@@ -17,6 +17,7 @@ import (
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/satfeed"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/wildfire-processor/internal/feed"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/wildfire-processor/internal/fire"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/services/wildfire-processor/internal/snapshot"
 )
 
 // fakeFeed serves a fixed list of events, closes every connection after a
@@ -218,6 +219,89 @@ func TestRestartedProcessorConvergesToTheSameFires(t *testing.T) {
 	waitFor(t, func() bool { return reflect.DeepEqual(s.live(), want) })
 	cancel()
 	<-done
+}
+
+type memSnapshots struct {
+	mu    sync.Mutex
+	b     []byte
+	saves int
+}
+
+func (m *memSnapshots) Save(_ context.Context, s *fire.Snapshot) (int, error) {
+	b, err := snapshot.Encode(s)
+	if err != nil {
+		return 0, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.b, m.saves = b, m.saves+1
+	return len(b), nil
+}
+
+func (m *memSnapshots) Load(context.Context) (*fire.Snapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.b == nil {
+		return nil, nil
+	}
+	return snapshot.Decode(m.b)
+}
+
+func TestRestartResumesFromSnapshot(t *testing.T) {
+	events := syntheticEvents(11, 600)
+	want := expected(events)
+	s := &store{docs: map[string]hazard.UpsertMessage{}, dead: map[string]bool{}, r: rand.New(rand.NewSource(8))}
+	snaps := &memSnapshots{}
+
+	half := &fakeFeed{events: events[:350], chunk: 29, r: rand.New(rand.NewSource(9))}
+	p1 := newProcessor(half, s)
+	p1.Snapshots, p1.SnapshotEvery = snaps, 10*time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = p1.Run(ctx); close(done) }()
+	waitFor(t, func() bool { snaps.mu.Lock(); defer snaps.mu.Unlock(); return snaps.saves >= 2 })
+	cancel()
+	<-done
+
+	full := &fakeFeed{events: events, chunk: 29, r: rand.New(rand.NewSource(10))}
+	p2 := newProcessor(full, s)
+	p2.Snapshots, p2.SnapshotEvery = snaps, time.Hour
+	ctx, cancel = context.WithCancel(context.Background())
+	done = make(chan struct{})
+	go func() { _ = p2.Run(ctx); close(done) }()
+	waitFor(t, func() bool { return reflect.DeepEqual(s.live(), want) })
+	st := p2.Status()
+	cancel()
+	<-done
+	if st.RestoredFrom < 300 {
+		t.Fatalf("restarted from offset %d, want the snapshot near 349", st.RestoredFrom)
+	}
+}
+
+func TestSnapshotFromAnotherSessionIsIgnored(t *testing.T) {
+	events := syntheticEvents(12, 200)
+	snaps := &memSnapshots{}
+	e := fire.New(fire.DefaultConfig())
+	for _, ev := range events {
+		_ = e.Apply(ev, time.Now())
+	}
+	e.Drain()
+	old, _ := e.Snapshot("other-profile", time.Now())
+	_, _ = snaps.Save(context.Background(), old)
+
+	s := &store{docs: map[string]hazard.UpsertMessage{}, dead: map[string]bool{}, r: rand.New(rand.NewSource(1))}
+	p := newProcessor(&fakeFeed{events: events, chunk: 50, r: rand.New(rand.NewSource(2))}, s)
+	p.Snapshots = snaps
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = p.Run(ctx); close(done) }()
+	waitFor(t, func() bool { return p.Status().CaughtUp })
+	st := p.Status()
+	cancel()
+	<-done
+	if st.RestoredFrom != 0 {
+		t.Fatalf("used a snapshot from another session (offset %d)", st.RestoredFrom)
+	}
 }
 
 type publishFunc func(ctx context.Context, emits []fire.Emit) error

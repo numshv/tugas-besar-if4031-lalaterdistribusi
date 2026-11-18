@@ -26,6 +26,11 @@ type Publisher interface {
 	Publish(ctx context.Context, emits []fire.Emit) error
 }
 
+type SnapshotStore interface {
+	Load(ctx context.Context) (*fire.Snapshot, error)
+	Save(ctx context.Context, s *fire.Snapshot) (int, error)
+}
+
 type Processor struct {
 	Engine        *fire.Engine
 	Feed          Feed
@@ -35,6 +40,10 @@ type Processor struct {
 	FlushEvents   int
 	// RetryBase is the first wait after a failed connection or send; 1 s when zero.
 	RetryBase time.Duration
+	// Snapshots, when set, lets a restart resume from the last saved state
+	// instead of replaying the feed from offset 0.
+	Snapshots     SnapshotStore
+	SnapshotEvery time.Duration
 
 	mu         sync.Mutex
 	started    time.Time
@@ -43,6 +52,8 @@ type Processor struct {
 	rebuildDur time.Duration
 	latest     satfeed.Session
 	flushNow   chan struct{}
+	lastSnap   time.Time
+	restoredAt int64
 }
 
 // Run blocks until ctx ends. Nothing is sent until the engine has replayed the
@@ -56,10 +67,17 @@ func (p *Processor) Run(ctx context.Context) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	restored := p.restore(ctx, sess)
 	p.mu.Lock()
+	if restored != nil {
+		p.Engine = restored
+		p.restoredAt = restored.Next() - 1
+	}
 	p.latest, p.catchUpTo = sess, sess.LatestOffset
+	p.lastSnap = time.Now()
+	p.checkCaughtUp()
 	p.mu.Unlock()
-	p.Log.Info("rebuilding from feed offset 0", "catch_up_to", sess.LatestOffset, "profile", sess.Profile, "speed", sess.Speed)
+	p.Log.Info("catching up with the feed", "from", p.next(), "catch_up_to", sess.LatestOffset, "profile", sess.Profile, "speed", sess.Speed)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -68,6 +86,38 @@ func (p *Processor) Run(ctx context.Context) error {
 	p.consume(ctx)
 	wg.Wait()
 	return ctx.Err()
+}
+
+// restore loads the last snapshot if it belongs to this feed session and was
+// taken with the same config; otherwise the engine starts from offset 0.
+func (p *Processor) restore(ctx context.Context, sess satfeed.Session) *fire.Engine {
+	if p.Snapshots == nil {
+		return nil
+	}
+	start := time.Now()
+	loadCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	snap, err := p.Snapshots.Load(loadCtx)
+	switch {
+	case err != nil:
+		p.Log.Warn("snapshot unavailable, replaying from offset 0", "error", err)
+		return nil
+	case snap == nil:
+		p.Log.Info("no snapshot yet, replaying from offset 0")
+		return nil
+	case snap.Profile != sess.Profile || snap.Next-1 > sess.LatestOffset:
+		p.Log.Warn("snapshot belongs to another feed session, replaying from offset 0",
+			"snapshot_profile", snap.Profile, "snapshot_offset", snap.Next-1, "feed_latest", sess.LatestOffset)
+		return nil
+	}
+	e, err := fire.Restore(p.Engine.Config(), snap)
+	if err != nil {
+		p.Log.Warn("snapshot not usable, replaying from offset 0", "error", err)
+		return nil
+	}
+	restoredOffset.Set(float64(snap.Next - 1))
+	p.Log.Info("restored snapshot", "offset", snap.Next-1, "taken_at", snap.TakenAt, "seconds", time.Since(start).Seconds())
+	return e
 }
 
 func (p *Processor) waitSession(ctx context.Context) satfeed.Session {
@@ -198,8 +248,8 @@ func (p *Processor) flusher(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			p.flush(shutdown)
+			shutdown, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			p.flush(shutdown, true)
 			cancel()
 			return
 		case <-gauges.C:
@@ -208,22 +258,60 @@ func (p *Processor) flusher(ctx context.Context) {
 		case <-t.C:
 		case <-p.flushNow:
 		}
-		p.flush(ctx)
+		p.flush(ctx, false)
 	}
 }
 
 // flush sends everything pending and retries until Kafka accepts it, so a
 // change is never dropped. While it retries the feed keeps being read and
 // newer changes of the same fire replace older ones in the next batch.
-func (p *Processor) flush(ctx context.Context) {
+//
+// A snapshot is cut right after Drain, so it holds exactly what this batch
+// leaves behind, and it is saved only once the batch is in Kafka.
+func (p *Processor) flush(ctx context.Context, final bool) {
 	p.mu.Lock()
-	if !p.caughtUp || p.Engine.PendingLen() == 0 {
+	if !p.caughtUp {
 		p.mu.Unlock()
 		return
 	}
-	batch := p.Engine.Drain()
+	var batch []fire.Emit
+	if p.Engine.PendingLen() > 0 {
+		batch = p.Engine.Drain()
+	}
+	var snap *fire.Snapshot
+	every := p.SnapshotEvery
+	if every <= 0 {
+		every = time.Minute
+	}
+	if p.Snapshots != nil && (final || time.Since(p.lastSnap) >= every) {
+		p.lastSnap = time.Now()
+		snap, _ = p.Engine.Snapshot(p.latest.Profile, p.lastSnap)
+	}
 	p.mu.Unlock()
 
+	if len(batch) > 0 && !p.publish(ctx, batch) {
+		return
+	}
+	if snap != nil {
+		p.saveSnapshot(ctx, snap)
+	}
+}
+
+func (p *Processor) saveSnapshot(ctx context.Context, snap *fire.Snapshot) {
+	start := time.Now()
+	n, err := p.Snapshots.Save(ctx, snap)
+	if err != nil {
+		snapshotErrors.Inc()
+		p.Log.Warn("snapshot not saved; the next one is tried later", "error", err)
+		return
+	}
+	snapshotOffset.Set(float64(snap.Next - 1))
+	snapshotBytes.Set(float64(n))
+	snapshotSeconds.Set(time.Since(start).Seconds())
+	p.Log.Info("snapshot saved", "offset", snap.Next-1, "bytes", n, "seconds", time.Since(start).Seconds())
+}
+
+func (p *Processor) publish(ctx context.Context, batch []fire.Emit) bool {
 	backoff := p.retryBase() / 5
 	for {
 		err := p.Pub.Publish(ctx, batch)
@@ -234,7 +322,7 @@ func (p *Processor) flush(ctx context.Context) {
 		p.Log.Warn("publish to hazard-upserts failed, retrying", "error", err, "messages", len(batch), "retry_in", backoff)
 		if !sleep(ctx, backoff) {
 			p.Log.Error("stopped with unsent changes; they are rebuilt from the feed on restart", "messages", len(batch))
-			return
+			return false
 		}
 		backoff = min(backoff*2, 10*time.Second)
 	}
@@ -243,6 +331,7 @@ func (p *Processor) flush(ctx context.Context) {
 		published.WithLabelValues(em.Message.Op).Inc()
 		emitDelay.Observe(now.Sub(em.ArrivedAt).Seconds())
 	}
+	return true
 }
 
 func (p *Processor) watchSession(ctx context.Context) {
@@ -301,6 +390,7 @@ type Status struct {
 	CaughtUp       bool    `json:"caught_up"`
 	CatchUpTo      int64   `json:"catch_up_to"`
 	RebuildSeconds float64 `json:"rebuild_seconds"`
+	RestoredFrom   int64   `json:"restored_from_offset"`
 	LatestOffset   int64   `json:"latest_offset"`
 	LagEvents      int64   `json:"lag_events"`
 	Pending        int     `json:"pending"`
@@ -313,7 +403,7 @@ func (p *Processor) Status() Status {
 	defer p.mu.Unlock()
 	s := p.Engine.Summary()
 	return Status{
-		Summary: s, CaughtUp: p.caughtUp, CatchUpTo: p.catchUpTo, RebuildSeconds: p.rebuildDur.Seconds(),
+		Summary: s, CaughtUp: p.caughtUp, CatchUpTo: p.catchUpTo, RebuildSeconds: p.rebuildDur.Seconds(), RestoredFrom: p.restoredAt,
 		LatestOffset: p.latest.LatestOffset, LagEvents: max(p.latest.LatestOffset-s.Offset, 0),
 		Pending: p.Engine.PendingLen(), Profile: p.latest.Profile, Speed: p.latest.Speed,
 	}

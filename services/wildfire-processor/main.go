@@ -25,6 +25,7 @@ import (
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/wildfire-processor/internal/feed"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/wildfire-processor/internal/fire"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/wildfire-processor/internal/processor"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/services/wildfire-processor/internal/snapshot"
 )
 
 const service = "wildfire-processor"
@@ -75,6 +76,12 @@ func run(log *slog.Logger) error {
 		Log:           log,
 		FlushInterval: time.Duration(envInt("FLUSH_INTERVAL_MS", 500)) * time.Millisecond,
 		FlushEvents:   envInt("FLUSH_EVENTS", 500),
+		SnapshotEvery: time.Duration(envInt("SNAPSHOT_EVERY_SECONDS", 60)) * time.Second,
+	}
+	if topic := kafkax.Env("SNAPSHOT_TOPIC", "bnpb.wildfire-snapshots.v1"); topic != "none" {
+		snaps := snapshot.NewKafka(brokers, topic)
+		defer snaps.Close()
+		proc.Snapshots = snaps
 	}
 
 	var verifier *jwtauth.Verifier
