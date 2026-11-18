@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/envx"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/httpx"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/kafkax"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/logging"
@@ -115,8 +116,8 @@ func main() {
 	go func() {
 		defer close(consumerDone)
 		kafkax.Run(ctx, log, brokers,
-			kafkax.Env("KAFKA_TOPIC", "bnpb.hazard-events.v1"),
-			kafkax.Env("KAFKA_GROUP_ID", "dashboard-updater"), handler)
+			envx.String("KAFKA_TOPIC", "bnpb.hazard-events.v1"),
+			envx.String("KAFKA_GROUP_ID", "dashboard-updater"), handler)
 	}()
 
 	port := os.Getenv("CONSUMER_DASHBOARD_PORT")

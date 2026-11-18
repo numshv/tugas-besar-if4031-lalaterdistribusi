@@ -15,6 +15,7 @@ import (
 	"time"
 	_ "time/tzdata"
 
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/envx"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/loader"
 )
 
@@ -25,13 +26,6 @@ func main() {
 	}
 }
 
-func env(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
 func run() error {
 	mode := flag.String("mode", "load", "load | spike | cleanup | generate")
 	file := flag.String("file", "", "dataset path, or - for stdin")
@@ -40,8 +34,8 @@ func run() error {
 	dryRun := flag.Bool("dry-run", false, "validate and print the expected checksum without sending")
 	strict := flag.Bool("strict", false, "stop at the first invalid row")
 	ratePerSec := flag.Float64("rate", 0, "messages per second (0 = as fast as Kafka accepts)")
-	brokers := flag.String("brokers", env("KAFKA_BROKERS", "kafka:9092"), "Kafka brokers, comma separated")
-	topic := flag.String("topic", env("KAFKA_UPSERTS_TOPIC", "bnpb.hazard-upserts.v1"), "hazard-upserts topic")
+	brokers := flag.String("brokers", envx.String("KAFKA_BROKERS", "kafka:9092"), "Kafka brokers, comma separated")
+	topic := flag.String("topic", envx.String("KAFKA_UPSERTS_TOPIC", "bnpb.hazard-upserts.v1"), "hazard-upserts topic")
 	timeLayout := flag.String("time-layout", "", "Go time layout of the time column (default: try common layouts)")
 	tz := flag.String("tz", "UTC", "time zone of timestamps without an offset")
 	var cols loader.Columns

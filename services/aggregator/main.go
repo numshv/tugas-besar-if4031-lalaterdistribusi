@@ -8,11 +8,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/envx"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/httpx"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/jwtauth"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/kafkax"
@@ -241,11 +241,11 @@ type config struct {
 
 func loadConfig() (config, error) {
 	cfg := config{
-		Port:                  envString("AGGREGATOR_PORT", "8083"),
-		PollInterval:          envSeconds("POLL_INTERVAL_SECONDS", 3),
-		HTTPTimeout:           envMillis("HTTP_CLIENT_TIMEOUT_MS", 5000),
-		MaxConcurrency:        envInt("AGG_MAX_CONCURRENCY", 64),
-		UnknownFieldPolicy:    envString("UNKNOWN_FIELD_POLICY", "passthrough"),
+		Port:                  envx.String("AGGREGATOR_PORT", "8083"),
+		PollInterval:          envx.Seconds("POLL_INTERVAL_SECONDS", 3),
+		HTTPTimeout:           envx.Millis("HTTP_CLIENT_TIMEOUT_MS", 5000),
+		MaxConcurrency:        envx.Int("AGG_MAX_CONCURRENCY", 64),
+		UnknownFieldPolicy:    envx.String("UNKNOWN_FIELD_POLICY", "passthrough"),
 		BMKGBaseURL:           os.Getenv("BMKG_BASE_URL"),
 		BMKGAPIKey:            os.Getenv("BMKG_API_KEY"),
 		PVMBGBaseURL:          os.Getenv("PVMBG_BASE_URL"),
@@ -255,12 +255,12 @@ func loadConfig() (config, error) {
 		KafkaBrokers:          strings.Split(os.Getenv("KAFKA_BROKERS"), ","),
 		KafkaTopic:            os.Getenv("KAFKA_TOPIC"),
 		UpsertsTopic:          os.Getenv("KAFKA_UPSERTS_TOPIC"),
-		UpsertsGroup:          envString("KAFKA_UPSERTS_GROUP", "bnpb.aggregator.hazard-upserts"),
+		UpsertsGroup:          envx.String("KAFKA_UPSERTS_GROUP", "bnpb.aggregator.hazard-upserts"),
 		Topology:              os.Getenv("TOPOLOGY_JSON"),
 		MonitorUser:           os.Getenv("MONGO_MONITOR_USERNAME"),
 		MonitorPassword:       os.Getenv("MONGO_MONITOR_PASSWORD"),
 		Namespace:             os.Getenv("POD_NAMESPACE"),
-		AuditTokens:           audit.ParseTokens(os.Getenv("AUDIT_TOKENS")),
+		AuditTokens:           envx.List("AUDIT_TOKENS"),
 		AuditIncludeRetracted: os.Getenv("AUDIT_INCLUDE_RETRACTED") == "true",
 		MappingRulesFile:      os.Getenv("MAPPING_RULES_FILE"),
 		FieldReportsTopic:     os.Getenv("FIELD_REPORTS_TOPIC"),
@@ -282,24 +282,4 @@ func loadConfig() (config, error) {
 		return cfg, errors.New("PVMBG_TOKEN is required")
 	}
 	return cfg, nil
-}
-
-func envString(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-func envInt(key string, fallback int) int {
-	v, err := strconv.Atoi(os.Getenv(key))
-	if err != nil {
-		return fallback
-	}
-	return v
-}
-func envSeconds(key string, fallback int) time.Duration {
-	return time.Duration(envInt(key, fallback)) * time.Second
-}
-func envMillis(key string, fallback int) time.Duration {
-	return time.Duration(envInt(key, fallback)) * time.Millisecond
 }

@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -16,6 +14,7 @@ import (
 	"github.com/segmentio/kafka-go"
 
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/correlation"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/envx"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/hazard"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/httpx"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/jwtauth"
@@ -51,12 +50,12 @@ func run(log *slog.Logger) error {
 	defer stop()
 
 	cfg := fire.DefaultConfig()
-	cfg.AllowedLateness = time.Duration(envInt("ALLOWED_LATENESS_MINUTES", 360)) * time.Minute
-	cfg.VersionEpoch = int64(envInt("VERSION_EPOCH", 0))
+	cfg.AllowedLateness = time.Duration(envx.Int("ALLOWED_LATENESS_MINUTES", 360)) * time.Minute
+	cfg.VersionEpoch = int64(envx.Int("VERSION_EPOCH", 0))
 
 	writer := &kafka.Writer{
 		Addr:         kafka.TCP(brokers...),
-		Topic:        kafkax.Env("KAFKA_UPSERTS_TOPIC", "bnpb.hazard-upserts.v1"),
+		Topic:        envx.String("KAFKA_UPSERTS_TOPIC", "bnpb.hazard-upserts.v1"),
 		Balancer:     &kafka.Hash{},
 		RequiredAcks: kafka.RequireAll,
 		BatchTimeout: 5 * time.Millisecond,
@@ -67,18 +66,18 @@ func run(log *slog.Logger) error {
 	proc := &processor.Processor{
 		Engine: fire.New(cfg),
 		Feed: &feed.Client{
-			BaseURL:     kafkax.Env("SATELLITE_BASE_URL", "https://satellite.naufarrel.dev"),
+			BaseURL:     envx.String("SATELLITE_BASE_URL", "https://satellite.naufarrel.dev"),
 			Token:       token,
 			HTTP:        &http.Client{},
-			IdleTimeout: time.Duration(envInt("FEED_IDLE_TIMEOUT_SECONDS", 45)) * time.Second,
+			IdleTimeout: time.Duration(envx.Int("FEED_IDLE_TIMEOUT_SECONDS", 45)) * time.Second,
 		},
 		Pub:           kafkaPublisher{w: writer, log: log},
 		Log:           log,
-		FlushInterval: time.Duration(envInt("FLUSH_INTERVAL_MS", 500)) * time.Millisecond,
-		FlushEvents:   envInt("FLUSH_EVENTS", 500),
-		SnapshotEvery: time.Duration(envInt("SNAPSHOT_EVERY_SECONDS", 60)) * time.Second,
+		FlushInterval: time.Duration(envx.Int("FLUSH_INTERVAL_MS", 500)) * time.Millisecond,
+		FlushEvents:   envx.Int("FLUSH_EVENTS", 500),
+		SnapshotEvery: time.Duration(envx.Int("SNAPSHOT_EVERY_SECONDS", 60)) * time.Second,
 	}
-	if topic := kafkax.Env("SNAPSHOT_TOPIC", "bnpb.wildfire-snapshots.v1"); topic != "none" {
+	if topic := envx.String("SNAPSHOT_TOPIC", "bnpb.wildfire-snapshots.v1"); topic != "none" {
 		snaps := snapshot.NewKafka(brokers, topic)
 		defer snaps.Close()
 		proc.Snapshots = snaps
@@ -89,7 +88,7 @@ func run(log *slog.Logger) error {
 		keys := jwtauth.NewBackgroundKeyProvider(ctx, url, log, time.Minute)
 		verifier = &jwtauth.Verifier{Keys: keys, Issuer: os.Getenv("JWT_ISSUER"), Audience: os.Getenv("JWT_AUDIENCE")}
 	}
-	auth := jwtauth.RequireInternal(verifier, splitTokens(os.Getenv("AUDIT_TOKENS")), "hanya BNPB Internal Ops yang boleh melihat data kebakaran internal")
+	auth := jwtauth.RequireInternal(verifier, envx.List("AUDIT_TOKENS"), "hanya BNPB Internal Ops yang boleh melihat data kebakaran internal")
 
 	root := http.NewServeMux()
 	root.Handle("GET /metrics", promhttp.Handler())
@@ -100,7 +99,7 @@ func run(log *slog.Logger) error {
 			log.Error("processor stopped", "error", err)
 		}
 	}()
-	return httpx.ListenAndServe(ctx, ":"+kafkax.Env("WILDFIRE_PORT", "8086"), root, log)
+	return httpx.ListenAndServe(ctx, ":"+envx.String("WILDFIRE_PORT", "8086"), root, log)
 }
 
 type kafkaPublisher struct {
@@ -128,22 +127,4 @@ func (p kafkaPublisher) Publish(ctx context.Context, emits []fire.Emit) error {
 		msgs = append(msgs, m)
 	}
 	return p.w.WriteMessages(ctx, msgs...)
-}
-
-func splitTokens(raw string) []string {
-	var out []string
-	for _, t := range strings.Split(raw, ",") {
-		if t = strings.TrimSpace(t); t != "" {
-			out = append(out, t)
-		}
-	}
-	return out
-}
-
-func envInt(key string, def int) int {
-	v, err := strconv.Atoi(os.Getenv(key))
-	if err != nil {
-		return def
-	}
-	return v
 }

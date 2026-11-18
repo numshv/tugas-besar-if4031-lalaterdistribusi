@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/segmentio/kafka-go"
+
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/envx"
 )
 
 type Handler func(ctx context.Context, log *slog.Logger, msg kafka.Message) error
@@ -131,24 +132,11 @@ func DedupeKey(m kafka.Message, hazardID string) string {
 }
 
 func Brokers() ([]string, error) {
-	raw := os.Getenv("KAFKA_BROKERS")
-	var out []string
-	for _, b := range strings.Split(raw, ",") {
-		if b = strings.TrimSpace(b); b != "" {
-			out = append(out, b)
-		}
-	}
+	out := envx.List("KAFKA_BROKERS")
 	if len(out) == 0 {
 		return nil, errors.New("KAFKA_BROKERS kosong: set mis. kafka:9092")
 	}
 	return out, nil
-}
-
-func Env(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
 }
 
 type Dedupe struct {

@@ -20,16 +20,6 @@ func WriteError(w http.ResponseWriter, status int, code, message string) {
 	httpx.Error(w, status, code, message)
 }
 
-func ParseTokens(raw string) []string {
-	var out []string
-	for _, t := range strings.Split(raw, ",") {
-		if t = strings.TrimSpace(t); t != "" {
-			out = append(out, t)
-		}
-	}
-	return out
-}
-
 func RequireToken(tokens []string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
