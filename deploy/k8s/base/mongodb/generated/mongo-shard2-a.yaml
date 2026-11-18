@@ -63,25 +63,25 @@ spec:
       containers:
         - name: mongod
           image: mongo:7.0
-          args:
-            - mongod
-            - --config
-            - /etc/mongo/mongod.conf
-            - --shardsvr
-            - --replSet
-            - shard-2
-            - --port
-            - "27017"
-            - --bind_ip_all
-            - --keyFile
-            - /keyfile/mongo-keyfile
+          command: ["bash", "/scripts/mongod-start.sh"]
           env:
-            - name: MONGO_INITDB_ROOT_USERNAME
+            - name: MONGO_REPLSET
+              value: shard-2
+            - name: MONGO_ROLE
+              value: shardsvr
+            - name: MONGO_SELF_HOST
+              value: mongo-shard2-a:27017
+            - name: TOPOLOGY_JSON
+              valueFrom:
+                configMapKeyRef:
+                  name: mongo-topology
+                  key: topology.json
+            - name: MONGO_ROOT_USERNAME
               valueFrom:
                 configMapKeyRef:
                   name: mongodb-config
-                  key: MONGO_INITDB_ROOT_USERNAME
-            - name: MONGO_INITDB_ROOT_PASSWORD
+                  key: MONGO_ROOT_USERNAME
+            - name: MONGO_ROOT_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: bnpb-secrets
@@ -97,6 +97,9 @@ spec:
               readOnly: true
             - name: conf
               mountPath: /etc/mongo
+              readOnly: true
+            - name: scripts
+              mountPath: /scripts
               readOnly: true
           resources:
             requests:
@@ -127,6 +130,9 @@ spec:
         - name: conf
           configMap:
             name: mongod-conf
+        - name: scripts
+          configMap:
+            name: mongod-start
   volumeClaimTemplates:
     - metadata:
         name: data

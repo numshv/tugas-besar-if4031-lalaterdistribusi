@@ -181,10 +181,14 @@ func (p *Pipeline) processBMKG(ctx context.Context, rec []byte, receivedAt time.
 }
 
 func (p *Pipeline) persist(ctx context.Context, ev hazard.Event) *Failure {
-	if err := p.Store.Upsert(ctx, ev); err != nil {
+	stored, applied, err := p.Store.Upsert(ctx, ev)
+	if err != nil {
 		return &Failure{Reason: "store_unavailable: " + err.Error(), Retryable: true}
 	}
-	if err := p.Pub.Publish(ctx, ev); err != nil {
+	if !applied {
+		return nil
+	}
+	if err := p.Pub.Publish(ctx, stored); err != nil {
 		return &Failure{Reason: "publish_failed: " + err.Error(), Retryable: true}
 	}
 	return nil

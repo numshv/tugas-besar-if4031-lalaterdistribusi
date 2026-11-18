@@ -20,6 +20,30 @@ const (
 	TypeCoastal  Type = "COASTAL"
 )
 
+func (s Source) Known() bool {
+	switch s {
+	case SourceBMKG, SourcePVMBG, SourceSatelit, SourceSensorPantai:
+		return true
+	}
+	return false
+}
+
+func (t Type) Known() bool {
+	switch t {
+	case TypeSeismic, TypeVolcanic, TypeWildfire, TypeCoastal:
+		return true
+	}
+	return false
+}
+
+func (s Severity) Known() bool {
+	switch s {
+	case SeverityNormal, SeverityWaspada, SeveritySiaga, SeverityAwas:
+		return true
+	}
+	return false
+}
+
 type Severity string
 
 const (
@@ -42,6 +66,9 @@ type Event struct {
 	IngestedAt  time.Time `json:"ingested_at"   bson:"ingested_at"`
 
 	Attributes map[string]any `json:"attributes" bson:"attributes"`
+
+	Version   int64 `json:"-" bson:"version"`
+	Retracted bool  `json:"-" bson:"retracted"`
 }
 
 var SummaryFields = []string{

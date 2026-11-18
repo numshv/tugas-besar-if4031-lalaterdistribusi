@@ -21,12 +21,12 @@ type Replayer interface {
 }
 
 // Ops endpoints are reachable through the ingress, so the aggregator checks the
-// caller itself: the assistants' audit token or a JWT with scope "internal".
+// caller itself: an assistants' audit token or a JWT with scope "internal".
 type Ops struct {
-	DLQ        dlq.Store
-	Replayer   Replayer
-	AuditToken string
-	Verifier   *jwtauth.Verifier
+	DLQ         dlq.Store
+	Replayer    Replayer
+	AuditTokens []string
+	Verifier    *jwtauth.Verifier
 	// FieldReports is not routed by the ingress, so its lookup needs no token.
 	FieldReports FieldReportReader
 }
@@ -36,7 +36,7 @@ type FieldReportReader interface {
 }
 
 func (o *Ops) register(mux *http.ServeMux) {
-	mux.Handle("GET /internal/audit/unprocessed", o.requireInternal(http.HandlerFunc(o.listUnprocessed)))
+	mux.Handle("GET /internal/ops/unprocessed", o.requireInternal(http.HandlerFunc(o.ListUnprocessed)))
 	mux.Handle("GET /internal/ops/unprocessed/{id}", o.requireInternal(http.HandlerFunc(o.getUnprocessed)))
 	mux.Handle("POST /internal/ops/replay", o.requireInternal(http.HandlerFunc(o.replay)))
 	if o.FieldReports != nil {
@@ -71,7 +71,7 @@ func (o *Ops) requireInternal(next http.Handler) http.Handler {
 			httpx.Error(w, http.StatusUnauthorized, "unauthorized", "Authorization must use the Bearer scheme")
 			return
 		}
-		if o.AuditToken != "" && subtle.ConstantTimeCompare([]byte(token), []byte(o.AuditToken)) == 1 {
+		if o.validAuditToken(token) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -102,7 +102,17 @@ type unprocessedItem struct {
 	Status     dlq.Status `json:"status"`
 }
 
-func (o *Ops) listUnprocessed(w http.ResponseWriter, r *http.Request) {
+func (o *Ops) validAuditToken(presented string) bool {
+	match := 0
+	for _, t := range o.AuditTokens {
+		match |= subtle.ConstantTimeCompare([]byte(t), []byte(presented))
+	}
+	return match == 1
+}
+
+// ListUnprocessed is served under /internal/audit, behind the audit API's own
+// token check (Lampiran A).
+func (o *Ops) ListUnprocessed(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	limit := 100
 	if raw := q.Get("limit"); raw != "" {

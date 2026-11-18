@@ -13,6 +13,7 @@ spec:
         app: aggregator
         role: aggregator
     spec:
+      serviceAccountName: aggregator
       containers:
         - name: aggregator
           image: bnpb/aggregator
@@ -39,14 +40,33 @@ spec:
                 secretKeyRef:
                   name: bnpb-secrets
                   key: MONGO_APP_PASSWORD
-            - name: AUDIT_TOKEN
+            - name: MONGO_URI
+              value: mongodb://$(MONGO_APP_USERNAME):$(MONGO_APP_PASSWORD)@mongodb:27017/$(MONGO_DB)?authSource=$(MONGO_DB)
+            - name: TOPOLOGY_JSON
+              valueFrom:
+                configMapKeyRef:
+                  name: mongo-topology
+                  key: topology.json
+            - name: MONGO_MONITOR_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: mongodb-config
+                  key: MONGO_MONITOR_USERNAME
+            - name: MONGO_MONITOR_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: bnpb-secrets
-                  key: AUDIT_TOKEN
+                  key: MONGO_MONITOR_PASSWORD
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: AUDIT_TOKENS
+              valueFrom:
+                secretKeyRef:
+                  name: bnpb-secrets
+                  key: AUDIT_TOKENS
                   optional: true
-            - name: MONGO_URI
-              value: mongodb://$(MONGO_APP_USERNAME):$(MONGO_APP_PASSWORD)@mongodb:27017/$(MONGO_DB)?authSource=$(MONGO_DB)
           volumeMounts:
             - name: mapping-rules
               mountPath: /etc/bnpb/mapping-rules

@@ -42,7 +42,7 @@ func newOpsServer(t *testing.T) (*httptest.Server, *rsa.PrivateKey, *dlq.MemoryS
 		})
 	}
 	ops := &Ops{
-		DLQ: q, Replayer: &fakeReplayer{}, AuditToken: "audit-secret",
+		DLQ: q, Replayer: &fakeReplayer{}, AuditTokens: []string{"audit-secret"},
 		Verifier: &jwtauth.Verifier{Keys: jwtauth.NewStaticKeyProvider(&key.PublicKey), Issuer: "bnpb-auth", Audience: "client-api"},
 	}
 	srv := httptest.NewServer(New(nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), 8, ops))
@@ -80,7 +80,7 @@ func call(t *testing.T, method, url, bearer string) (int, map[string]any) {
 
 func TestUnprocessedOnlyForInternalOps(t *testing.T) {
 	srv, key, _ := newOpsServer(t)
-	url := srv.URL + "/internal/audit/unprocessed"
+	url := srv.URL + "/internal/ops/unprocessed"
 	cases := map[string]struct {
 		bearer string
 		want   int
@@ -113,7 +113,7 @@ func TestUnprocessedOnlyForInternalOps(t *testing.T) {
 
 func TestUnprocessedContractAndPaging(t *testing.T) {
 	srv, _, _ := newOpsServer(t)
-	code, page1 := call(t, http.MethodGet, srv.URL+"/internal/audit/unprocessed?limit=2", "audit-secret")
+	code, page1 := call(t, http.MethodGet, srv.URL+"/internal/ops/unprocessed?limit=2", "audit-secret")
 	if code != 200 {
 		t.Fatalf("HTTP %d", code)
 	}
@@ -131,7 +131,7 @@ func TestUnprocessedContractAndPaging(t *testing.T) {
 		t.Errorf("received_at = %v", first["received_at"])
 	}
 
-	_, page2 := call(t, http.MethodGet, srv.URL+"/internal/audit/unprocessed?limit=2&cursor="+page1["next_cursor"].(string), "audit-secret")
+	_, page2 := call(t, http.MethodGet, srv.URL+"/internal/ops/unprocessed?limit=2&cursor="+page1["next_cursor"].(string), "audit-secret")
 	items2 := page2["items"].([]any)
 	if len(items2) != 1 || page2["next_cursor"] != nil {
 		t.Fatalf("page 2 = %v (recovered must be hidden, cursor null on last page)", page2)
@@ -139,7 +139,7 @@ func TestUnprocessedContractAndPaging(t *testing.T) {
 	if s := items2[0].(map[string]any)["status"]; s != "parked" {
 		t.Errorf("replaying reported as %v, want parked", s)
 	}
-	if code, _ := call(t, http.MethodGet, srv.URL+"/internal/audit/unprocessed?limit=5000", "audit-secret"); code != 400 {
+	if code, _ := call(t, http.MethodGet, srv.URL+"/internal/ops/unprocessed?limit=5000", "audit-secret"); code != 400 {
 		t.Errorf("limit 5000: HTTP %d, want 400", code)
 	}
 }

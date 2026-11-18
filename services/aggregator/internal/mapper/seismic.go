@@ -92,6 +92,7 @@ func mapOneSeismic(raw map[string]any, warningByEvent map[string]map[string]any,
 		Longitude:   lon,
 		OccurredAt:  occurredAt,
 		IngestedAt:  time.Now().UTC(),
+		Version:     1,
 		Attributes:  attrs,
 	}, nil
 }

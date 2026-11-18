@@ -48,8 +48,9 @@ func (h *Handler) ListHazardsHandler(w http.ResponseWriter, r *http.Request) {
 
 	query := r.URL.Query()
 	hazardType := query.Get("type")
-	if len(query["type"]) != 1 || (hazardType != string(hazard.TypeSeismic) && hazardType != string(hazard.TypeVolcanic)) {
-		httpx.Error(w, http.StatusBadRequest, "invalid_type", "type must be SEISMIC or VOLCANIC")
+	latest := len(query["type"]) == 0
+	if len(query["type"]) > 1 || (!latest && !hazard.Type(hazardType).Known()) {
+		httpx.Error(w, http.StatusBadRequest, "invalid_type", "type must be SEISMIC, VOLCANIC, WILDFIRE or COASTAL, or omitted for the latest events of every type")
 		return
 	}
 	if len(query["limit"]) > 1 || len(query["cursor"]) > 1 {
@@ -62,7 +63,7 @@ func (h *Handler) ListHazardsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cursor := query.Get("cursor")
-	if cursor != "" {
+	if cursor != "" && !latest {
 		if _, err := hazard.DecodeCursor(cursor); err != nil {
 			httpx.Error(w, http.StatusBadRequest, "invalid_cursor", "cursor is invalid")
 			return
@@ -80,16 +81,25 @@ func (h *Handler) ListHazardsHandler(w http.ResponseWriter, r *http.Request) {
 		events     []hazard.Event
 		eventsErr  error
 		nextCursor string
+		page       latestPage
 		status     *aggregatorStatus
 		statusErr  error
 	)
 
 	var wg sync.WaitGroup
 	wg.Go(func() {
+		if latest {
+			page, eventsErr = h.fetchLatest(ctx, limit, cursor)
+			events = page.Items
+			if page.NextCursor != nil {
+				nextCursor = *page.NextCursor
+			}
+			return
+		}
 		events, nextCursor, eventsErr = h.fetchHazards(ctx, hazardType, query.Get("since"), limit, cursor)
 	})
 
-	if hazardType == string(hazard.TypeVolcanic) {
+	if latest || hazardType == string(hazard.TypeVolcanic) {
 		wg.Go(func() {
 			status, statusErr = h.fetchStatus(ctx)
 		})
@@ -102,11 +112,19 @@ func (h *Handler) ListHazardsHandler(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, http.StatusTooManyRequests, "too_many_requests", "server busy, retry later")
 			return
 		}
+		if errors.Is(eventsErr, errBadCursor) {
+			httpx.Error(w, http.StatusBadRequest, "invalid_cursor", "cursor is invalid")
+			return
+		}
 		httpx.Error(w, http.StatusBadGateway, "aggregator_unreachable", "failed to reach aggregator")
 		return
 	}
 	if nextCursor != "" {
 		w.Header().Set(hazard.NextCursorHeader, nextCursor)
+	}
+	if page.Partial {
+		w.Header().Set(PartialHeader, "true")
+		w.Header().Set(UnavailableUnitsHeader, strings.Join(page.UnavailableUnits, ","))
 	}
 
 	staleSince := ""
@@ -147,6 +165,44 @@ func (h *Handler) fetchHazards(ctx context.Context, hazardType, since string, li
 		return nil, "", err
 	}
 	return events, nextCursor, nil
+}
+
+const (
+	PartialHeader          = "X-Partial"
+	UnavailableUnitsHeader = "X-Unavailable-Units"
+)
+
+var errBadCursor = errors.New("aggregator rejected cursor")
+
+type latestPage struct {
+	Items            []hazard.Event `json:"items"`
+	NextCursor       *string        `json:"next_cursor"`
+	Partial          bool           `json:"partial"`
+	UnavailableUnits []string       `json:"unavailable_units"`
+}
+
+func (h *Handler) fetchLatest(ctx context.Context, limit int, cursor string) (latestPage, error) {
+	query := make(url.Values)
+	query.Set("limit", strconv.Itoa(limit))
+	if cursor != "" {
+		query.Set("cursor", cursor)
+	}
+	var page latestPage
+	err := h.httpClient.GetJSON(ctx, h.aggregatorBaseURL+"/internal/hazards/latest?"+query.Encode(), nil, &page)
+	if err != nil {
+		var statusErr *httpx.StatusError
+		if errors.As(err, &statusErr) {
+			switch statusErr.Status {
+			case http.StatusTooManyRequests:
+				return latestPage{}, errAggregatorBusy
+			case http.StatusBadRequest:
+				return latestPage{}, errBadCursor
+			}
+			return latestPage{}, fmt.Errorf("aggregator status %d", statusErr.Status)
+		}
+		return latestPage{}, err
+	}
+	return page, nil
 }
 
 func requestsRawFields(requested []string) bool {

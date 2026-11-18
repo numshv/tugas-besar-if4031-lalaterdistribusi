@@ -14,24 +14,26 @@ import (
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/dlq"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/mapper"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/schema"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/store"
 )
 
 type fakeStore struct {
+	store.Store
 	mu     sync.Mutex
 	events map[string]hazard.Event
 	writes int
 	down   bool
 }
 
-func (s *fakeStore) Upsert(_ context.Context, e hazard.Event) error {
+func (s *fakeStore) Upsert(_ context.Context, e hazard.Event) (hazard.Event, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.down {
-		return errors.New("mongo down")
+		return hazard.Event{}, false, errors.New("mongo down")
 	}
 	s.events[e.HazardID] = e
 	s.writes++
-	return nil
+	return e, true, nil
 }
 
 func (s *fakeStore) ListByType(context.Context, hazard.Type, time.Time, *hazard.Cursor, int) ([]hazard.Event, bool, error) {

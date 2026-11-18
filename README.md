@@ -169,16 +169,122 @@ kubectl apply -k deploy/k8s/overlays/dev
 kubectl -n sistem-informasi-kebencanaan-bnpb logs -f job/mongo-init
 ```
 
-The `mongo-init` Job is idempotent: it only runs `replSetInitiate` when every member of a
-replica set is reachable and none is initialized, so a member whose disk was wiped just
-rejoins and resyncs. It then adds the shards, creates the `bnpb_app` and `bnpb_monitor`
-users, shards `bnpb.hazard_events` on `{_id: "hashed"}`, creates the indexes and seeds
-`volcano_reference`. If an older cluster has the single-member `mongodb` headless Service,
+Every member starts empty. The highest-priority member of each replica set
+(`mongod-start.sh` + `bootstrap.js`) runs `replSetInitiate` and creates the root user through
+the localhost exception, but only when every peer is reachable and none already belongs to a
+replica set, so a member whose disk was wiped just rejoins and resyncs. The `mongo-init` Job
+is idempotent: it waits for the primaries, adds the shards, creates the `bnpb_app` and
+`bnpb_monitor` users, shards `bnpb.hazard_events` on `{_id: "hashed"}`, creates the indexes
+and seeds `volcano_reference`. If an older cluster has the single-member `mongodb` headless Service,
 delete it before applying (`clusterIP` cannot change in place).
 
 To change the layout, edit the table at the top of `scripts/gen-mongo-manifests.sh` and
 run it; it rewrites `deploy/k8s/base/mongodb/generated/`, the topology files and the
 dev overlay's delete patches.
+
+For local work without Kubernetes, `scripts/dev-mongo-sharded.sh up` starts a small sharded
+cluster in Docker (one config server, two single-member shards, mongos on
+`127.0.0.1:27017`) using the same bootstrap and init scripts; `down` removes it. The store
+contract tests run against the in-memory store on every `go test`, and also against Mongo
+when `STORE_TEST_MONGO_URI` is set:
+
+```bash
+scripts/dev-mongo-sharded.sh up
+STORE_TEST_MONGO_URI='mongodb://root:devroot@127.0.0.1:27017/?authSource=admin' \
+  go test ./services/aggregator/internal/store/ -race -count=1
+# stops shard-1 for real and checks reads come back partial instead of failing
+STORE_TEST_DOCKER=1 STORE_TEST_MONGO_URI='mongodb://root:devroot@127.0.0.1:27017/?authSource=admin' \
+  go test ./services/aggregator/internal/storemon/ -run PartialRead -v -count=1
+scripts/dev-mongo-sharded.sh down
+```
+
+The aggregator probes every storage unit with `hello` every 2 seconds and marks a unit
+down after two failed probes in a row. Reads that cross shards answer with
+`partial` and `unavailable_units` instead of failing: `STORE_PARTIAL_MODE=literal` (default)
+sets `partial` whenever a data unit is down, `data` only when a whole shard is unreachable.
+Units are named per member (`shard-2-c`, `cfg-a`) so the name survives a failover; the node
+comes from the Kubernetes API (read-only Role `aggregator-pod-reader`). `GET /metrics` on the
+aggregator exposes `store_unit_up`, `store_unit_primary`, `store_docs`, `store_data_bytes`,
+`store_ops_total`, `store_repl_ops_total`, `store_query_duration_seconds` and
+`store_partial_reads_total`, labelled by `unit`, `shard` and `node`. Every aggregator replica
+exports the same unit series, so deduplicate with `max by (node, unit)` first. Write skew
+across nodes (1.0 means perfectly even):
+
+```promql
+max(sum by (node) (max by (node, unit) (rate(store_ops_total{op="insert"}[1m]))))
+/
+avg(sum by (node) (max by (node, unit) (rate(store_ops_total{op="insert"}[1m]))))
+```
+
+### Writing HazardEvents from other services (`hazard-upserts`)
+
+The aggregator is the only writer of HazardEvents. Polled sources (BMKG, PVMBG) are stored
+directly; every other producer (wildfire processor, coastal ingester, dataset loader) sends
+messages to `bnpb.hazard-upserts.v1` (6 partitions, 7-day retention), which all aggregator
+replicas consume as group `bnpb.aggregator.hazard-upserts`. Build messages with
+`hazard.EncodeUpsert` instead of writing JSON by hand:
+
+```go
+enc, err := hazard.EncodeUpsert(hazard.UpsertMessage{
+    Op: hazard.OpUpsert, Source: hazard.SourceSatelit, SourceRefID: "fire-0a41c7", Version: 1042,
+    HazardType: hazard.TypeWildfire, Severity: hazard.SeveritySiaga, AreaName: "Kalimantan Tengah",
+    Latitude: -2.51234, Longitude: 113.8045, OccurredAt: occurredAt, Attributes: attrs,
+}, hazard.UpsertMeta{CorrelationID: cid, Traceparent: tp})
+// write enc.Key, enc.Value and enc.Headers to bnpb.hazard-upserts.v1
+```
+
+- The key `source|source_ref_id` keeps every update of one event on one partition, in order.
+- `version` must increase with every change of the same event (feed offset for wildfires,
+  `observed_at` in ms for coastal readings); an equal or lower version is ignored.
+- `op: retract` only needs `source`, `source_ref_id` and `version`: the event stays and is
+  marked retracted, and a later, higher version revives it.
+- The aggregator computes `hazard_id` and `ingested_at`; values sent by producers are ignored.
+- Invalid messages (bad JSON, invalid UTF-8, unknown op/source/type, version ≤ 0, over
+  1 MB) are parked and counted in `hazard_upserts_dead_lettered_total{reason}`; the
+  partition keeps moving. Storage or publish failures are retried in place and the offset is
+  committed only after the event is stored and published.
+- Stored events are re-published to `bnpb.hazard-events.v1` with headers `X-Hazard-Version`
+  and `X-Hazard-Op`; consumers deduplicate on `hazard_id` + version, so updates and
+  retractions are not mistaken for duplicates.
+- `hazard_store_latency_seconds{source}` measures `produced_at` → stored (P4 p95).
+
+### Latest events across every shard
+
+`GET /hazards` without `type` returns the newest events of every hazard type, newest
+`ingested_at` first, read across all shards. The body stays a JSON array like M1; paging uses
+`X-Next-Cursor`, and when part of the storage is unreachable the response carries
+`X-Partial: true` and `X-Unavailable-Units`. Retracted events are hidden. The aggregator
+caches the first page for 1 second and collapses concurrent misses into one query, so the
+load test target `GET /hazards?limit=50` does not hammer MongoDB.
+
+```bash
+curl -s -i -H "Authorization: Bearer $FIELD" "http://localhost:8080/hazards?limit=50"
+```
+
+### Audit API
+
+Served by the aggregator under `/internal/audit/*` (the ingress routes it there) and protected
+by `Authorization: Bearer <token>`, where the token is one of the comma-separated values in
+`AUDIT_TOKENS` (Secret `bnpb-secrets`). Without any token configured the endpoints answer 503
+`audit_not_configured`; at most 4 audit requests run at once, the rest get 429. Errors use
+`{"error":{"code":"...","message":"..."}}`; storage problems answer 503 or `partial: true`,
+never 500.
+
+| Endpoint | What it returns |
+|---|---|
+| `GET /internal/audit/events?source&since&limit&cursor` | Every HazardEvent field, ascending by `ingested_at` then `hazard_id`; `since` filters `ingested_at >=`; `limit` 1–1000 (default 100); `next_cursor` is `null` on the last page |
+| `GET /internal/audit/checksum?source` | `count` and SHA-256 over the `source_ref_id` values, sorted by byte, joined by `\n`, no trailing newline, lowercase hex. Without `source` it covers every source (`"source": null`) |
+| `GET /internal/audit/location?hazard_id` | The shard that holds the event (asked from mongos) and its reachable copies: `{node, unit, role}`; 404 if the event does not exist |
+
+`AUDIT_INCLUDE_RETRACTED` (default `false`) decides whether retracted events count in
+`/events` and `/checksum`; both endpoints always follow the same rule.
+
+```bash
+AUDIT=change-me-audit
+curl -s -H "Authorization: Bearer $AUDIT" "http://localhost:8083/internal/audit/checksum?source=BMKG"
+curl -s -H "Authorization: Bearer $AUDIT" "http://localhost:8083/internal/audit/events?limit=5"
+curl -s -H "Authorization: Bearer $AUDIT" "http://localhost:8083/internal/audit/location?hazard_id=<id>"
+```
 
 ## Test Scenarios
 
@@ -441,12 +547,14 @@ Ops adapt the mapping rules. Required fields are `report_id`, `volcano_id`,
 | Storage or Kafka unavailable | `retrying` | `true` | Retried after 1 s, 2 s, 4 s, ... up to 5 min; parked after 8 attempts |
 
 Messages are stored once (the id is a hash of the content) in the aggregator's
-`unprocessed` collection. Only the assistants' audit token or an Internal Ops JWT can
-read them. Media and Field tokens get 403.
+`unprocessed` collection. The audit listing takes an assistants' audit token
+(`AUDIT_TOKENS`, comma separated). The ops endpoints take an audit token or an Internal
+Ops JWT; Media and Field tokens get 403.
 
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /internal/audit/unprocessed?source=&limit=&cursor=` | Lampiran A listing (retrying and parked) |
+| `GET /internal/ops/unprocessed?source=&limit=&cursor=` | Same listing for Internal Ops |
 | `GET /internal/ops/unprocessed/{message_id}` | One message with its exact payload |
 | `POST /internal/ops/replay?source=PVMBG` | Reprocess every parked message of a source, oldest first |
 
@@ -456,13 +564,14 @@ read them. Media and Field tokens get 403.
 GW=http://localhost:8090
 kubectl -n sistem-informasi-kebencanaan-bnpb port-forward svc/pvmbg-mock 8082:8082 &
 PVMBG=http://localhost:8082
+AUDIT="${AUDIT_TOKENS%%,*}"
 OPS=$(curl -s -X POST "$GW/login" -H 'Content-Type: application/json' \
   -d "{\"username\":\"$CLIENT_OPS_ID\",\"password\":\"$CLIENT_OPS_SECRET\"}" | field access_token)
 
 # 1. Incompatible change: records are parked, other sources keep flowing
 curl -s -X POST -H "$ADMIN" -d '{"version":3}' "$PVMBG/admin/schema-version"
 sleep 15
-curl -s -H "Authorization: Bearer $AUDIT_TOKEN" "$GW/internal/audit/unprocessed?source=PVMBG"
+curl -s -H "Authorization: Bearer $AUDIT" "$GW/internal/audit/unprocessed?source=PVMBG"
 
 # 2. Broken payloads: nothing crashes, the next responses are processed
 for k in truncated deep invalid_utf8 oversize; do
@@ -471,13 +580,13 @@ done
 kubectl -n sistem-informasi-kebencanaan-bnpb get pods -l app=aggregator   # RESTARTS stays 0
 
 # 3. Only Internal Ops may look
-code -H "Authorization: Bearer $MEDIA" "$GW/internal/audit/unprocessed"   # 403
+code -H "Authorization: Bearer $MEDIA" "$GW/internal/ops/unprocessed"   # 403
 
 # 4. Adapt the system, then replay: everything recovers, no duplicates
 cp deploy/k8s/base/aggregator/mapping-rules.example.json deploy/k8s/base/aggregator/mapping-rules.json
 bash scripts/deploy.sh dev            # new ConfigMap hash restarts the aggregator
 curl -s -X POST -H "Authorization: Bearer $OPS" "$GW/internal/ops/replay?source=PVMBG"
-curl -s -H "Authorization: Bearer $AUDIT_TOKEN" "$GW/internal/audit/unprocessed?source=PVMBG"
+curl -s -H "Authorization: Bearer $AUDIT" "$GW/internal/audit/unprocessed?source=PVMBG"
 ```
 
 After the replay only the four broken responses from step 2 are still listed. Their
