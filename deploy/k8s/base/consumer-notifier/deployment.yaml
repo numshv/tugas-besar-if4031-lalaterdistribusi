@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consumer-notifier
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: consumer-notifier
+  template:
+    metadata:
+      labels:
+        app: consumer-notifier
+        role: consumer
+    spec:
+      containers:
+        - name: consumer-notifier
+          image: bnpb/consumer-notifier
+          ports:
+            - containerPort: 8086
+          envFrom:
+            - configMapRef:
+                name: bnpb-common
+            - configMapRef:
+                name: consumer-notifier-config
+          resources:
+            requests:
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8086

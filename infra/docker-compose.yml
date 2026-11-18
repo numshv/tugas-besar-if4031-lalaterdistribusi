@@ -46,7 +46,7 @@ services:
       KAFKA_TOPIC_PARTITIONS: ${KAFKA_TOPIC_PARTITIONS}
       KAFKA_TOPIC_RETENTION_MS: ${KAFKA_TOPIC_RETENTION_MS}
     volumes:
-      - ./broker/create-topics.sh:/create-topics.sh:ro
+      - ../deploy/k8s/base/kafka/create-topics.sh:/create-topics.sh:ro
     command: ["/bin/sh", "/create-topics.sh"]
     networks: [app-net]
     restart: "no"

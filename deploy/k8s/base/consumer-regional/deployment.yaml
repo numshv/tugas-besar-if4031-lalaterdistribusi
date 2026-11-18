@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: consumer-regional
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: consumer-regional
+  template:
+    metadata:
+      labels:
+        app: consumer-regional
+        role: consumer
+    spec:
+      containers:
+        - name: consumer-regional
+          image: bnpb/consumer-regional
+          ports:
+            - containerPort: 8087
+          envFrom:
+            - configMapRef:
+                name: bnpb-common
+            - configMapRef:
+                name: consumer-regional-config
+          resources:
+            requests:
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8087

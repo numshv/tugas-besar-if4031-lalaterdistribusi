@@ -21,3 +21,4 @@ Thumbs.db
 
 scripts/results/
 infra/keys/*.pem
+infra/keys/mongo-keyfile

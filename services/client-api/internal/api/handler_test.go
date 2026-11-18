@@ -65,7 +65,6 @@ func TestListHazardsRejectsInvalidTypeBeforeAggregatorCall(t *testing.T) {
 		name   string
 		target string
 	}{
-		{name: "missing", target: "/hazards"},
 		{name: "empty", target: "/hazards?type="},
 		{name: "unsupported", target: "/hazards?type=TSUNAMI"},
 		{name: "wrong case", target: "/hazards?type=seismic"},
@@ -81,6 +80,51 @@ func TestListHazardsRejectsInvalidTypeBeforeAggregatorCall(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Fatalf("aggregator calls = %d, want 0", calls)
+	}
+}
+
+func TestListHazardsWithoutTypeReturnsLatestAcrossTypes(t *testing.T) {
+	var path, limit, cursor string
+	handler := newTestHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/internal/status" {
+			_, _ = io.WriteString(w, `{"pvmbg":{"healthy":true}}`)
+			return
+		}
+		path, limit, cursor = r.URL.Path, r.URL.Query().Get("limit"), r.URL.Query().Get("cursor")
+		_, _ = io.WriteString(w, `{"items":`+testHazardEvent+`,"next_cursor":"opaque-next","partial":true,"unavailable_units":["shard-1-b","shard-2-c"]}`)
+	})
+
+	response := requestHazards(handler, "media", "/hazards?limit=50&cursor=opaque-prev")
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d; body = %s", response.Code, response.Body)
+	}
+	if path != "/internal/hazards/latest" || limit != "50" || cursor != "opaque-prev" {
+		t.Fatalf("forwarded %s limit=%s cursor=%s", path, limit, cursor)
+	}
+	if got := response.Header().Get("X-Next-Cursor"); got != "opaque-next" {
+		t.Fatalf("X-Next-Cursor = %q", got)
+	}
+	if response.Header().Get(PartialHeader) != "true" || response.Header().Get(UnavailableUnitsHeader) != "shard-1-b,shard-2-c" {
+		t.Fatalf("partial headers = %v", response.Header())
+	}
+	body := response.Body.String()
+	if !strings.HasPrefix(body, "[") || strings.Contains(body, "source_ref_id") {
+		t.Fatalf("body must stay an array filtered by scope: %s", body)
+	}
+}
+
+func TestListHazardsLatestForwardsBadCursorAs400(t *testing.T) {
+	handler := newTestHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/internal/hazards/latest" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"code":"invalid_cursor","message":"cursor is invalid"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"pvmbg":{"healthy":true}}`)
+	})
+	response := requestHazards(handler, "field", "/hazards?cursor=garbage")
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "invalid_cursor") {
+		t.Fatalf("status = %d body = %s", response.Code, response.Body)
 	}
 }
 

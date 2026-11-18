@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+  - service.yaml
+  - rbac.yaml
+configMapGenerator:
+  - name: aggregator-config
+    literals:
+      - AGGREGATOR_PORT=8083
+      - POLL_INTERVAL_SECONDS=3
+      - BMKG_BASE_URL=http://bmkg-mock:8081
+      - PVMBG_BASE_URL=http://pvmbg-mock:8082
+      - HTTP_CLIENT_TIMEOUT_MS=5000
+      - AGG_MAX_CONCURRENCY=64
+      - UNKNOWN_FIELD_POLICY=passthrough
+      - MONGO_APP_USERNAME=bnpb_app
+      - STORE_PARTIAL_MODE=literal
+      - KAFKA_UPSERTS_TOPIC=bnpb.hazard-upserts.v1
+      - KAFKA_UPSERTS_GROUP=bnpb.aggregator.hazard-upserts
+      - AUDIT_INCLUDE_RETRACTED=false

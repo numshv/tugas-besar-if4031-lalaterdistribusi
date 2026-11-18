@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: mongos
+spec:
+  selector:
+    matchLabels:
+      app: mongos
+  template:
+    metadata:
+      labels:
+        app: mongos
+        role: other
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: bnpb/slot
+                    operator: Exists
+      terminationGracePeriodSeconds: 30
+      initContainers:
+        - name: keyfile
+          image: mongo:7.0
+          command:
+            - sh
+            - -c
+            - cp /keyfile-src/mongo-keyfile /keyfile/mongo-keyfile && chown 999:999 /keyfile/mongo-keyfile && chmod 400 /keyfile/mongo-keyfile
+          volumeMounts:
+            - name: keyfile-src
+              mountPath: /keyfile-src
+              readOnly: true
+            - name: keyfile
+              mountPath: /keyfile
+          resources:
+            requests:
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+      containers:
+        - name: mongos
+          image: mongo:7.0
+          args:
+            - mongos
+            - --configdb
+            - $(MONGO_CONFIGDB)
+            - --port
+            - "27017"
+            - --bind_ip_all
+            - --keyFile
+            - /keyfile/mongo-keyfile
+          env:
+            - name: MONGO_CONFIGDB
+              valueFrom:
+                configMapKeyRef:
+                  name: mongo-topology
+                  key: MONGO_CONFIGDB
+          ports:
+            - name: mongo
+              containerPort: 27017
+          volumeMounts:
+            - name: keyfile
+              mountPath: /keyfile
+              readOnly: true
+          resources:
+            requests:
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          readinessProbe:
+            exec:
+              command: ["bash", "-c", "echo > /dev/tcp/127.0.0.1/27017"]
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            exec:
+              command: ["bash", "-c", "echo > /dev/tcp/127.0.0.1/27017"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+      volumes:
+        - name: keyfile-src
+          secret:
+            secretName: mongo-keyfile
+            defaultMode: 0400
+        - name: keyfile
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi

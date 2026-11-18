@@ -53,6 +53,9 @@ func (p *KafkaPublisher) Publish(ctx context.Context, e hazard.Event) error {
 			{Key: correlation.Header, Value: []byte(id)},
 		}
 	}
+	for k, v := range hazard.EventHeaders(e) {
+		msg.Headers = append(msg.Headers, kafka.Header{Key: k, Value: []byte(v)})
+	}
 
 	if err := p.writer.WriteMessages(ctx, msg); err != nil {
 		return fmt.Errorf("publish hazard_id=%s: %w", e.HazardID, err)

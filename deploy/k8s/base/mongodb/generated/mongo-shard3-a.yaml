@@ -1,0 +1,145 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo-shard3-a
+  labels:
+    app: mongo-shard
+    bnpb/mongo-unit: shard3-a
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    bnpb/mongo-unit: shard3-a
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: 27017
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo-shard3-a
+  labels:
+    app: mongo-shard
+    bnpb/mongo-member: "true"
+    bnpb/mongo-unit: shard3-a
+spec:
+  serviceName: mongo-shard3-a
+  replicas: 1
+  selector:
+    matchLabels:
+      bnpb/mongo-unit: shard3-a
+  template:
+    metadata:
+      labels:
+        app: mongo-shard
+        role: store
+        bnpb/mongo-member: "true"
+        bnpb/mongo-unit: shard3-a
+        bnpb/replset: shard-3
+        bnpb/slot: a
+    spec:
+      nodeSelector:
+        bnpb/slot: a
+      terminationGracePeriodSeconds: 30
+      initContainers:
+        - name: keyfile
+          image: mongo:7.0
+          command:
+            - sh
+            - -c
+            - cp /keyfile-src/mongo-keyfile /keyfile/mongo-keyfile && chown 999:999 /keyfile/mongo-keyfile && chmod 400 /keyfile/mongo-keyfile
+          volumeMounts:
+            - name: keyfile-src
+              mountPath: /keyfile-src
+              readOnly: true
+            - name: keyfile
+              mountPath: /keyfile
+          resources:
+            requests:
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+      containers:
+        - name: mongod
+          image: mongo:7.0
+          command: ["bash", "/scripts/mongod-start.sh"]
+          env:
+            - name: MONGO_REPLSET
+              value: shard-3
+            - name: MONGO_ROLE
+              value: shardsvr
+            - name: MONGO_SELF_HOST
+              value: mongo-shard3-a:27017
+            - name: TOPOLOGY_JSON
+              valueFrom:
+                configMapKeyRef:
+                  name: mongo-topology
+                  key: topology.json
+            - name: MONGO_ROOT_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: mongodb-config
+                  key: MONGO_ROOT_USERNAME
+            - name: MONGO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bnpb-secrets
+                  key: MONGO_ROOT_PASSWORD
+          ports:
+            - name: mongo
+              containerPort: 27017
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+            - name: keyfile
+              mountPath: /keyfile
+              readOnly: true
+            - name: conf
+              mountPath: /etc/mongo
+              readOnly: true
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+          resources:
+            requests:
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+          readinessProbe:
+            exec:
+              command: ["bash", "-c", "echo > /dev/tcp/127.0.0.1/27017"]
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            exec:
+              command: ["bash", "-c", "echo > /dev/tcp/127.0.0.1/27017"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+      volumes:
+        - name: keyfile-src
+          secret:
+            secretName: mongo-keyfile
+            defaultMode: 0400
+        - name: keyfile
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        - name: conf
+          configMap:
+            name: mongod-conf
+        - name: scripts
+          configMap:
+            name: mongod-start
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 5Gi

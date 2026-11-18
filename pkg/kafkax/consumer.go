@@ -74,6 +74,13 @@ func Header(m kafka.Message, key string) string {
 	return ""
 }
 
+func DedupeKey(m kafka.Message, hazardID string) string {
+	if v := Header(m, "X-Hazard-Version"); v != "" {
+		return hazardID + "@" + v
+	}
+	return hazardID
+}
+
 func Brokers() ([]string, error) {
 	raw := os.Getenv("KAFKA_BROKERS")
 	var out []string

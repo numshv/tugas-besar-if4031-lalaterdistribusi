@@ -1,0 +1,76 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mongo-init
+spec:
+  backoffLimit: 10
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app: mongo-init
+        role: other
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mongo-init
+          image: mongo:7.0
+          command: ["mongosh", "--nodb", "--quiet", "/scripts/mongo-init.js"]
+          env:
+            - name: MONGOS_HOST
+              value: mongodb:27017
+            - name: INIT_TIMEOUT_SECONDS
+              value: "600"
+            - name: MONGO_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: bnpb-common
+                  key: MONGO_DB
+            - name: TOPOLOGY_JSON
+              valueFrom:
+                configMapKeyRef:
+                  name: mongo-topology
+                  key: topology.json
+            - name: MONGO_ROOT_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: mongodb-config
+                  key: MONGO_ROOT_USERNAME
+            - name: MONGO_APP_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: mongodb-config
+                  key: MONGO_APP_USERNAME
+            - name: MONGO_MONITOR_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: mongodb-config
+                  key: MONGO_MONITOR_USERNAME
+            - name: MONGO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bnpb-secrets
+                  key: MONGO_ROOT_PASSWORD
+            - name: MONGO_APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bnpb-secrets
+                  key: MONGO_APP_PASSWORD
+            - name: MONGO_MONITOR_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bnpb-secrets
+                  key: MONGO_MONITOR_PASSWORD
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+          resources:
+            requests:
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: scripts
+          configMap:
+            name: mongodb-init

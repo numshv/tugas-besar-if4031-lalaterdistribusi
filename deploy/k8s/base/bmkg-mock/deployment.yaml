@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bmkg-mock
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bmkg-mock
+  template:
+    metadata:
+      labels:
+        app: bmkg-mock
+        role: mock
+    spec:
+      containers:
+        - name: bmkg-mock
+          image: bnpb/bmkg-mock
+          ports:
+            - containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: bnpb-common
+            - configMapRef:
+                name: bmkg-mock-config
+          env:
+            - name: BMKG_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bnpb-secrets
+                  key: BMKG_API_KEY
+          resources:
+            requests:
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8081
