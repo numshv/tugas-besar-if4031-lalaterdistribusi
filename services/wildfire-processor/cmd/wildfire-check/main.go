@@ -17,20 +17,22 @@ import (
 
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/satfeed"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/wildfire-processor/internal/fire"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/services/wildfire-processor/internal/snapshot"
 )
 
 func main() {
 	in := flag.String("in", "", "recorded feed, one JSON event per line")
 	out := flag.String("out", "", "write the fires here as JSON")
 	lateness := flag.Duration("lateness", 360*time.Minute, "allowed lateness")
+	snap := flag.Bool("snapshot", false, "also snapshot, encode, restore and compare")
 	flag.Parse()
-	if err := run(*in, *out, *lateness); err != nil {
+	if err := run(*in, *out, *lateness, *snap); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(in, out string, lateness time.Duration) error {
+func run(in, out string, lateness time.Duration, snap bool) error {
 	f, err := os.Open(in)
 	if err != nil {
 		return err
@@ -74,6 +76,12 @@ func run(in, out string, lateness time.Duration) error {
 	fmt.Printf("digest            %s\n", fire.Digest(fires))
 	fmt.Printf("brute force match %v (%.1fs)\n", match, time.Since(refStart).Seconds())
 
+	if snap {
+		if err := checkSnapshot(e, cfg, fire.Digest(fires)); err != nil {
+			return err
+		}
+	}
+
 	if out != "" {
 		b, err := json.MarshalIndent(fires, "", "  ")
 		if err != nil {
@@ -85,6 +93,37 @@ func run(in, out string, lateness time.Duration) error {
 	}
 	if !match {
 		return fmt.Errorf("streaming result differs from the brute-force reference")
+	}
+	return nil
+}
+
+func checkSnapshot(e *fire.Engine, cfg fire.Config, digest string) error {
+	e.Drain()
+	start := time.Now()
+	s, err := e.Snapshot("check", time.Now())
+	if err != nil {
+		return err
+	}
+	b, err := snapshot.Encode(s)
+	if err != nil {
+		return err
+	}
+	encoded := time.Since(start)
+	start = time.Now()
+	back, err := snapshot.Decode(b)
+	if err != nil {
+		return err
+	}
+	r, err := fire.Restore(cfg, back)
+	if err != nil {
+		return err
+	}
+	restored := time.Since(start)
+	same := fire.Digest(r.Fires()) == digest
+	fmt.Printf("snapshot          %.1f MB, take+encode %.2fs, decode+restore %.2fs, same fires %v\n",
+		float64(len(b))/(1<<20), encoded.Seconds(), restored.Seconds(), same)
+	if !same {
+		return fmt.Errorf("restored snapshot differs")
 	}
 	return nil
 }

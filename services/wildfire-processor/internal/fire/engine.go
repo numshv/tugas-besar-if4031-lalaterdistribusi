@@ -124,6 +124,7 @@ func (e *Engine) MaxEventTime() time.Time { return e.maxEventTime }
 func (e *Engine) VirtualNow() time.Time   { return e.virtualNow }
 func (e *Engine) Counters() Counters      { return e.counters }
 func (e *Engine) PendingLen() int         { return len(e.pending) }
+func (e *Engine) Config() Config          { return e.cfg }
 
 // Apply processes one feed event. A malformed event is counted and returns an
 // error for logging; the engine stays consistent and the next event goes on.
