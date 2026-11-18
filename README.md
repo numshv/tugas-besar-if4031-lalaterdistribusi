@@ -341,6 +341,41 @@ curl -s -H "Authorization: Bearer $AUDIT" "http://localhost:8083/internal/audit/
 curl -s -H "Authorization: Bearer $AUDIT" "http://localhost:8083/internal/audit/location?hazard_id=<id>"
 ```
 
+### Analytics dashboard (P1)
+
+Open `http://<ingress>/analytics` in a browser and sign in as `analytics-viewer`
+(`CLIENT_ANALYTICS_ID` / `CLIENT_ANALYTICS_SECRET`; BNPB Internal Ops also works). The
+`analytics` scope is read-only: it can load the dashboard data but is refused by client-api
+and by the ops endpoints. The page keeps the token in memory only and refreshes it before it
+expires; leaving the page or a failed refresh asks for the password again. Without
+`CLIENT_ANALYTICS_SECRET` the auth-service simply has no analytics client.
+
+It shows every HazardEvent in the chosen range (24 h, 7 d, 30 d, 1 y, all, or a custom UTC
+range), counted by occurrence time:
+
+- a line chart per hazard kind: Gempa, Tsunami, Gunung api, Kebakaran hutan, Pesisir.
+  `hazard_type` has four values; Tsunami is the `SEISMIC` events whose
+  `attributes.potential_tsunami` is `true`, and Gempa the other `SEISMIC` events, so the five
+  kinds never overlap and add up to the total;
+- counts per severity, and a sortable, searchable table per `area_name`;
+- a table of the five totals next to the chart, so no number depends on color alone.
+
+`GET /analytics/data?range=30d&bucket=day` (or `from`/`to`) returns the same numbers as JSON.
+The aggregator computes them with one `$group` through mongos and caches each range for 5
+seconds. When a shard cannot be reached, that aggregate fails, so it falls back to a
+`find` with `allowPartialResults` through mongos, counts in Go and answers
+`partial: true`; the page then shows a red banner and marks every number with `≥`. A dead
+unit with the data still served by its replicas shows a yellow banner and exact numbers.
+Retracted events follow `AUDIT_INCLUDE_RETRACTED`, the same rule as the Audit API.
+
+To prove the numbers equal a direct count from the Audit API, recount every page of
+`/internal/audit/events` and compare category, severity, area and bucket totals:
+
+```bash
+CLIENT_ANALYTICS_SECRET=... AUDIT_TOKENS=... \
+  go run ./services/aggregator/cmd/verify-analytics --base=http://<ingress> --bucket=week
+```
+
 ## Test Scenarios
 
 Run these from the repository root in bash. The first block loads `.env` and defines
