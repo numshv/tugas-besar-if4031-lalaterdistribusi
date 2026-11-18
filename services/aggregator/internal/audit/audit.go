@@ -45,21 +45,6 @@ func validToken(tokens []string, presented string) bool {
 	return match == 1
 }
 
-func LimitConcurrency(max int) func(http.Handler) http.Handler {
-	sem := make(chan struct{}, max)
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
-				next.ServeHTTP(w, r)
-			default:
-				WriteError(w, http.StatusTooManyRequests, "too_many_requests", "audit API sedang penuh, coba lagi")
-			}
-		})
-	}
-}
-
 type Params struct {
 	Source hazard.Source
 	Since  time.Time

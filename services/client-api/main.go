@@ -49,7 +49,7 @@ func main() {
 
 	root := http.NewServeMux()
 	root.HandleFunc("GET /health", httpx.Health(service))
-	root.Handle("/", api.LimitConcurrency(maxConcurrency)(limitedMux))
+	root.Handle("/", httpx.LimitConcurrency(maxConcurrency, "client-api is at capacity")(limitedMux))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
