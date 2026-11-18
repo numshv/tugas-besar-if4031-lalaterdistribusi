@@ -347,6 +347,28 @@ func Run(t *testing.T, newStore Factory) {
 		}
 	})
 
+	t.Run("purge removes only synthetic events", func(t *testing.T) {
+		s := newStore(t, NewClock().Now)
+		sim := event("sim-spike-s1-000001", hazard.TypeSeismic, 1)
+		mustUpsert(t, s, sim, true)
+		deleted, err := s.Purge(ctx, sim.Source, sim.SourceRefID)
+		if err != nil || !deleted {
+			t.Fatalf("purge sim: deleted=%v err=%v", deleted, err)
+		}
+		if _, err := s.Get(ctx, sim.HazardID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("purged event still readable: %v", err)
+		}
+		if deleted, err := s.Purge(ctx, sim.Source, sim.SourceRefID); err != nil || deleted {
+			t.Fatalf("second purge must be a no-op: deleted=%v err=%v", deleted, err)
+		}
+		real := event("EQ-real", hazard.TypeSeismic, 1)
+		mustUpsert(t, s, real, true)
+		if _, err := s.Purge(ctx, real.Source, real.SourceRefID); !errors.Is(err, store.ErrInvalidEvent) {
+			t.Fatalf("purge of a real event err = %v, want ErrInvalidEvent", err)
+		}
+		mustGet(t, s, real.HazardID)
+	})
+
 	t.Run("retract before upsert leaves a tombstone that blocks older upserts", func(t *testing.T) {
 		s := newStore(t, NewClock().Now)
 		e := event("fire-2", hazard.TypeSeismic, 2)

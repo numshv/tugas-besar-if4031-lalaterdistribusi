@@ -143,6 +143,25 @@ function ensureHazardEvents(client) {
   }
 }
 
+function ensureExperimentCollections(client) {
+  const experiments = [
+    { name: "exp_by_area", key: { area_name: 1 } },
+    { name: "exp_by_ingested", key: { ingested_at: 1 } },
+  ];
+  for (const exp of experiments) {
+    const ns = `${dbName}.${exp.name}`;
+    const meta = client.getDB("config").getCollection("collections").findOne({ _id: ns });
+    if (meta && meta.key && !meta.dropped) {
+      log("experiment collection already sharded", { ns, key: meta.key });
+    } else {
+      must(cmd(client.getDB("admin"), { shardCollection: ns, key: exp.key }), `shardCollection ${ns}`);
+      log("experiment collection sharded", { ns, key: exp.key });
+    }
+    must(cmd(client.getDB("admin"), { configureCollectionBalancing: ns, chunkSize: 1 }), `chunkSize ${ns}`);
+    log("experiment chunk size set", { ns, chunkSizeMB: 1 });
+  }
+}
+
 function ensureVolcanoReference(client) {
   const col = client.getDB(dbName).getCollection("volcano_reference");
   if (col.countDocuments({}) > 0) {
@@ -192,6 +211,7 @@ function main() {
       ensureUser(client.getDB(dbName), env.MONGO_APP_USERNAME, env.MONGO_APP_PASSWORD, [{ role: "readWrite", db: dbName }]);
       ensureUser(admin, env.MONGO_MONITOR_USERNAME, env.MONGO_MONITOR_PASSWORD, monitorRoles);
       ensureHazardEvents(client);
+      ensureExperimentCollections(client);
       ensureVolcanoReference(client);
       return true;
     } finally {

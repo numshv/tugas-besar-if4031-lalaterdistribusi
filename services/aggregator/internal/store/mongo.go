@@ -29,6 +29,10 @@ type MongoStore struct {
 	now    func() time.Time
 	health Health
 	mode   PartialMode
+
+	experiments bool
+	expByArea   *mongo.Collection
+	expByIngest *mongo.Collection
 }
 
 func NewMongoClient(ctx context.Context, uri string) (*mongo.Client, error) {
@@ -60,13 +64,63 @@ func NewMongoStore(client *mongo.Client, dbName string) *MongoStore {
 		SetWriteConcern(&writeconcern.WriteConcern{W: "majority", WTimeout: writeTimeout})
 	db := client.Database(dbName)
 	return &MongoStore{
-		client: client,
-		db:     db,
-		col:    db.Collection("hazard_events", collOpts),
-		fences: db.Collection("fences", collOpts),
-		now:    time.Now,
-		mode:   PartialLiteral,
+		client:      client,
+		db:          db,
+		col:         db.Collection("hazard_events", collOpts),
+		fences:      db.Collection("fences", collOpts),
+		expByArea:   db.Collection("exp_by_area", collOpts),
+		expByIngest: db.Collection("exp_by_ingested", collOpts),
+		now:         time.Now,
+		mode:        PartialLiteral,
 	}
+}
+
+func (s *MongoStore) WithExperiments(on bool) *MongoStore {
+	s.experiments = on
+	return s
+}
+
+func (s *MongoStore) shadow(ctx context.Context, events ...hazard.Event) {
+	if !s.experiments {
+		return
+	}
+	for _, e := range events {
+		doc := contentFields(e)
+		doc["_id"] = e.HazardID
+		doc["ingested_at"] = e.IngestedAt
+		targets := []struct {
+			col    *mongo.Collection
+			filter bson.M
+		}{
+			{s.expByArea, bson.M{"_id": e.HazardID, "area_name": e.AreaName}},
+			{s.expByIngest, bson.M{"_id": e.HazardID, "ingested_at": e.IngestedAt}},
+		}
+		for _, t := range targets {
+			if _, err := t.col.ReplaceOne(ctx, t.filter, doc, options.Replace().SetUpsert(true)); err != nil {
+				experimentWriteErrors.WithLabelValues(t.col.Name()).Inc()
+			}
+		}
+	}
+}
+
+func (s *MongoStore) Purge(ctx context.Context, source hazard.Source, sourceRefID string) (bool, error) {
+	if err := validatePurge(source, sourceRefID); err != nil {
+		return false, err
+	}
+	defer observe("purge", time.Now())
+	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
+	defer cancel()
+	id := hazard.NewID(source, sourceRefID)
+	res, err := s.col.DeleteOne(ctx, bson.M{"_id": id})
+	if err != nil {
+		return false, fmt.Errorf("purge hazard_id=%s: %w", id, err)
+	}
+	for _, c := range []*mongo.Collection{s.expByArea, s.expByIngest} {
+		if _, err := c.DeleteMany(ctx, bson.M{"_id": id}); err != nil {
+			experimentWriteErrors.WithLabelValues(c.Name()).Inc()
+		}
+	}
+	return res.DeletedCount > 0, nil
 }
 
 func (s *MongoStore) WithClock(now func() time.Time) *MongoStore {
@@ -187,7 +241,9 @@ func (s *MongoStore) Retract(ctx context.Context, source hazard.Source, sourceRe
 	if err != nil {
 		return hazard.Event{}, false, fmt.Errorf("retract hazard_id=%s: %w", id, err)
 	}
-	return fromDocument(d), true, nil
+	stored := fromDocument(d)
+	s.shadow(ctx, stored)
+	return stored, true, nil
 }
 
 func (s *MongoStore) Upsert(ctx context.Context, e hazard.Event) (hazard.Event, bool, error) {
@@ -218,7 +274,9 @@ func (s *MongoStore) Upsert(ctx context.Context, e hazard.Event) (hazard.Event, 
 	if err != nil {
 		return hazard.Event{}, false, fmt.Errorf("upsert hazard_id=%s: %w", e.HazardID, err)
 	}
-	return fromDocument(d), true, nil
+	stored := fromDocument(d)
+	s.shadow(ctx, stored)
+	return stored, true, nil
 }
 
 type fenceDocument struct {
@@ -262,7 +320,9 @@ func (s *MongoStore) CommitPoll(ctx context.Context, source hazard.Source, epoch
 		}
 		return nil, fmt.Errorf("commit poll source=%s epoch=%d: %w", source, epoch, err)
 	}
-	return result.([]hazard.Event), nil
+	applied := result.([]hazard.Event)
+	s.shadow(ctx, applied...)
+	return applied, nil
 }
 
 func (s *MongoStore) commitPollTxn(sc mongo.SessionContext, source hazard.Source, epoch int64, cursor string, events []hazard.Event) ([]hazard.Event, error) {

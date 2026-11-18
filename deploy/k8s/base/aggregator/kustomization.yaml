@@ -22,6 +22,7 @@ configMapGenerator:
       - KAFKA_UPSERTS_TOPIC=bnpb.hazard-upserts.v1
       - KAFKA_UPSERTS_GROUP=bnpb.aggregator.hazard-upserts
       - AUDIT_INCLUDE_RETRACTED=false
+      - STORE_EXPERIMENTS=off
   # Ops adapt to an upstream schema change by editing this file; the new hash
   # restarts the pods, then POST /internal/ops/replay. See mapping-rules.example.json.
   - name: aggregator-mapping-rules

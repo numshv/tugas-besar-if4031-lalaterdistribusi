@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/hazard"
@@ -33,6 +34,7 @@ const MaxLatestLimit = 1000
 type Store interface {
 	Upsert(ctx context.Context, e hazard.Event) (stored hazard.Event, applied bool, err error)
 	Retract(ctx context.Context, source hazard.Source, sourceRefID string, version int64) (stored hazard.Event, applied bool, err error)
+	Purge(ctx context.Context, source hazard.Source, sourceRefID string) (deleted bool, err error)
 	CommitPoll(ctx context.Context, source hazard.Source, epoch int64, cursor string, events []hazard.Event) (applied []hazard.Event, err error)
 	LoadCheckpoint(ctx context.Context, source hazard.Source) (cursor string, epoch int64, err error)
 	Get(ctx context.Context, hazardID string) (hazard.Event, error)
@@ -165,6 +167,16 @@ func validateEvent(e hazard.Event) error {
 func validateRetract(source hazard.Source, sourceRefID string) error {
 	if source == "" || sourceRefID == "" {
 		return fmt.Errorf("%w: source and source_ref_id are required", ErrInvalidEvent)
+	}
+	return nil
+}
+
+func validatePurge(source hazard.Source, sourceRefID string) error {
+	if err := validateRetract(source, sourceRefID); err != nil {
+		return err
+	}
+	if !strings.HasPrefix(sourceRefID, hazard.SimPrefix) {
+		return fmt.Errorf("%w: purge only removes synthetic events (%s*)", ErrInvalidEvent, hazard.SimPrefix)
 	}
 	return nil
 }

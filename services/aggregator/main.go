@@ -65,6 +65,10 @@ func run(log *slog.Logger) error {
 	}()
 
 	mongoStore := store.NewMongoStore(mongoClient, cfg.MongoDB)
+	if os.Getenv("STORE_EXPERIMENTS") == "on" {
+		mongoStore.WithExperiments(true)
+		log.Warn("STORE_EXPERIMENTS=on: every write is shadowed into exp_by_area and exp_by_ingested")
+	}
 	indexCtx, cancelIndexes := context.WithTimeout(ctx, 10*time.Second)
 	if err := mongoStore.EnsureIndexes(indexCtx); err != nil {
 		cancelIndexes()
