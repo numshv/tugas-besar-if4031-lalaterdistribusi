@@ -10,7 +10,9 @@ import (
 
 	"github.com/segmentio/kafka-go"
 
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/correlation"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/envx"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/hazard"
 )
 
 type Handler func(ctx context.Context, log *slog.Logger, msg kafka.Message) error
@@ -42,7 +44,7 @@ func Run(ctx context.Context, log *slog.Logger, brokers []string, topic, groupID
 			continue
 		}
 
-		mlog := log.With("correlation_id", Header(m, "X-Correlation-ID"),
+		mlog := log.With("correlation_id", Header(m, correlation.Header),
 			"partition", m.Partition, "offset", m.Offset)
 
 		var herr error
@@ -92,7 +94,7 @@ func RunNoDrop(ctx context.Context, log *slog.Logger, brokers []string, topic, g
 			time.Sleep(time.Second)
 			continue
 		}
-		mlog := log.With("correlation_id", Header(m, "X-Correlation-ID"),
+		mlog := log.With("correlation_id", Header(m, correlation.Header),
 			"partition", m.Partition, "offset", m.Offset)
 
 		backoff := 200 * time.Millisecond
@@ -125,7 +127,7 @@ func Header(m kafka.Message, key string) string {
 }
 
 func DedupeKey(m kafka.Message, hazardID string) string {
-	if v := Header(m, "X-Hazard-Version"); v != "" {
+	if v := Header(m, hazard.HeaderVersion); v != "" {
 		return hazardID + "@" + v
 	}
 	return hazardID

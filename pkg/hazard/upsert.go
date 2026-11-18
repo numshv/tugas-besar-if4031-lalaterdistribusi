@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/correlation"
 )
 
 const (
@@ -16,7 +18,7 @@ const (
 
 	SimPrefix = "sim-"
 
-	HeaderCorrelationID = "X-Correlation-ID"
+	HeaderCorrelationID = correlation.Header
 	HeaderTraceparent   = "traceparent"
 	HeaderProducedAt    = "produced_at"
 	HeaderVersion       = "X-Hazard-Version"
