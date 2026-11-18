@@ -9,6 +9,7 @@ require (
 	github.com/segmentio/kafka-go v0.4.51
 	go.mongodb.org/mongo-driver v1.17.10
 	golang.org/x/sync v0.16.0
+	golang.org/x/time v0.9.0
 	k8s.io/api v0.34.1
 	k8s.io/apimachinery v0.34.1
 	k8s.io/client-go v0.34.1
@@ -56,7 +57,6 @@ require (
 	golang.org/x/sys v0.35.0 // indirect
 	golang.org/x/term v0.34.0 // indirect
 	golang.org/x/text v0.28.0 // indirect
-	golang.org/x/time v0.9.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.12.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
