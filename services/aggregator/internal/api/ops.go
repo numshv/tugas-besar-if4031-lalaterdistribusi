@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"net/http"
@@ -60,36 +59,7 @@ func (o *Ops) getFieldReport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (o *Ops) requireInternal(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		header := r.Header.Get("Authorization")
-		if header == "" {
-			httpx.Error(w, http.StatusUnauthorized, "unauthorized", "Authorization header is required")
-			return
-		}
-		token, ok := jwtauth.BearerToken(header)
-		if !ok {
-			httpx.Error(w, http.StatusUnauthorized, "unauthorized", "Authorization must use the Bearer scheme")
-			return
-		}
-		if o.validAuditToken(token) {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if o.Verifier == nil {
-			httpx.Error(w, http.StatusUnauthorized, "unauthorized", "token tidak valid")
-			return
-		}
-		scope, _, err := o.Verifier.Verify(token)
-		if err != nil {
-			httpx.Error(w, http.StatusUnauthorized, "unauthorized", "token tidak valid")
-			return
-		}
-		if scope != jwtauth.ScopeInternal {
-			httpx.Error(w, http.StatusForbidden, "forbidden", "hanya BNPB Internal Ops yang boleh memeriksa pesan gagal")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	return jwtauth.RequireInternal(o.Verifier, o.AuditTokens, "hanya BNPB Internal Ops yang boleh memeriksa pesan gagal")(next)
 }
 
 type unprocessedItem struct {
@@ -100,14 +70,6 @@ type unprocessedItem struct {
 	Retryable  bool       `json:"retryable"`
 	Attempts   int        `json:"attempts"`
 	Status     dlq.Status `json:"status"`
-}
-
-func (o *Ops) validAuditToken(presented string) bool {
-	match := 0
-	for _, t := range o.AuditTokens {
-		match |= subtle.ConstantTimeCompare([]byte(t), []byte(presented))
-	}
-	return match == 1
 }
 
 // ListUnprocessed is served under /internal/audit, behind the audit API's own
