@@ -44,12 +44,12 @@ func run(log *slog.Logger) error {
 	}
 
 	interval := time.Duration(envInt("BMKG_EVENT_INTERVAL_SECONDS", 10)) * time.Second
-	if interval <= 0 {
-		return errors.New("BMKG_EVENT_INTERVAL_SECONDS must be positive")
+	if interval < 0 {
+		return errors.New("BMKG_EVENT_INTERVAL_SECONDS must not be negative")
 	}
 
 	seedCount := envInt("BMKG_SEED_COUNT", minSeedCount)
-	if seedCount < minSeedCount {
+	if interval > 0 && seedCount < minSeedCount {
 		log.Warn("seed count raised to contract minimum", "requested", seedCount, "applied", minSeedCount)
 		seedCount = minSeedCount
 	}
@@ -57,8 +57,15 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	store := seismic.NewStore(seedCount)
-	go store.Run(ctx, interval, log)
+	var store *seismic.Store
+	if interval == 0 {
+		store = seismic.NewEmptyStore()
+		seedCount = 0
+		log.Warn("quiet mode: BMKG_EVENT_INTERVAL_SECONDS=0, no seed and no generated events (P1 dataset checksum runs)")
+	} else {
+		store = seismic.NewStore(seedCount)
+		go store.Run(ctx, interval, log)
+	}
 
 	log.Info("mock ready",
 		"run_id", store.RunID(),
