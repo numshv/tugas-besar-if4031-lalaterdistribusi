@@ -30,6 +30,11 @@ func MapVolcanic(reports []map[string]any, resolver VolcanoResolver, policy Unkn
 	return out, errs
 }
 
+// MapVolcanicOne maps a single PVMBG report.
+func MapVolcanicOne(raw map[string]any, resolver VolcanoResolver, policy UnknownFieldPolicy) (hazard.Event, error) {
+	return mapOneVolcanic(raw, resolver, policy)
+}
+
 func mapOneVolcanic(raw map[string]any, resolver VolcanoResolver, policy UnknownFieldPolicy) (hazard.Event, error) {
 	reportID, err := reqString(raw, "report_id")
 	if err != nil {

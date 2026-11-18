@@ -15,4 +15,15 @@ configMapGenerator:
       - AGG_MAX_CONCURRENCY=64
       - UNKNOWN_FIELD_POLICY=passthrough
       - MONGO_APP_USERNAME=bnpb_app
+      - MAPPING_RULES_FILE=/etc/bnpb/mapping-rules/mapping-rules.json
+      - AUTH_JWKS_URL=http://auth-service:8084/.well-known/jwks.json
+      - FIELD_REPORTS_TOPIC=bnpb.field-reports.v1
       - STORE_PARTIAL_MODE=literal
+      - KAFKA_UPSERTS_TOPIC=bnpb.hazard-upserts.v1
+      - KAFKA_UPSERTS_GROUP=bnpb.aggregator.hazard-upserts
+      - AUDIT_INCLUDE_RETRACTED=false
+  # Ops adapt to an upstream schema change by editing this file; the new hash
+  # restarts the pods, then POST /internal/ops/replay. See mapping-rules.example.json.
+  - name: aggregator-mapping-rules
+    files:
+      - mapping-rules.json

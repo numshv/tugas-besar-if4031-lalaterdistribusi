@@ -17,6 +17,8 @@ resources:
   - consumer-dashboard
   - consumer-notifier
   - consumer-regional
+  - field-report-api
+  - wildfire-processor
 configMapGenerator:
   - name: bnpb-common
     literals:

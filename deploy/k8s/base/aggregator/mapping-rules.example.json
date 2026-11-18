@@ -1,0 +1,7 @@
+{
+  "PVMBG": {
+    "rename": { "level": "alert_level" },
+    "values": { "alert_level": { "1": "Normal", "2": "Waspada", "3": "Siaga", "4": "Awas" } },
+    "defaults": { "reported_at": "$received_at" }
+  }
+}

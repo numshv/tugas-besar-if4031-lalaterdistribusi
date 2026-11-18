@@ -77,7 +77,7 @@ func main() {
 		} else if err := ctx.Err(); err != nil {
 			return err
 		}
-		if dedupe.Seen(item.HazardID) {
+		if dedupe.Seen(kafkax.DedupeKey(m, item.HazardID)) {
 			mlog.Info("duplicate_skipped", "hazard_id", item.HazardID)
 			return nil
 		}

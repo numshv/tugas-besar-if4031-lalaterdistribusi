@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+  - service.yaml
+configMapGenerator:
+  - name: wildfire-processor-config
+    literals:
+      - WILDFIRE_PORT=8086
+      - SATELLITE_BASE_URL=https://satellite.naufarrel.dev
+      - KAFKA_UPSERTS_TOPIC=bnpb.hazard-upserts.v1
+      - ALLOWED_LATENESS_MINUTES=360
+      - FLUSH_INTERVAL_MS=500
+      - FLUSH_EVENTS=500
+      - FEED_IDLE_TIMEOUT_SECONDS=45
+      - VERSION_EPOCH=0
+      - SNAPSHOT_TOPIC=bnpb.wildfire-snapshots.v1
+      - SNAPSHOT_EVERY_SECONDS=60
+      - AUTH_JWKS_URL=http://auth-service:8084/.well-known/jwks.json

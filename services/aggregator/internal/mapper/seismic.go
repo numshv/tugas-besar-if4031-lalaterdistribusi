@@ -32,6 +32,27 @@ func MapSeismic(events, warnings []map[string]any, policy UnknownFieldPolicy) ([
 	return out, errs
 }
 
+// MapSeismicOne maps a single BMKG seismic event together with its tsunami
+// warning (nil when there is none).
+func MapSeismicOne(raw, warning map[string]any, policy UnknownFieldPolicy) (hazard.Event, error) {
+	byEvent := map[string]map[string]any{}
+	if eventID, _ := raw["event_id"].(string); eventID != "" && warning != nil {
+		byEvent[eventID] = warning
+	}
+	return mapOneSeismic(raw, byEvent, policy)
+}
+
+// WarningsByEvent indexes tsunami warnings by the seismic event they refer to.
+func WarningsByEvent(warnings []map[string]any) map[string]map[string]any {
+	out := make(map[string]map[string]any, len(warnings))
+	for _, w := range warnings {
+		if refID, _ := w["related_event_id"].(string); refID != "" {
+			out[refID] = w
+		}
+	}
+	return out
+}
+
 func mapOneSeismic(raw map[string]any, warningByEvent map[string]map[string]any, policy UnknownFieldPolicy) (hazard.Event, error) {
 	eventID, err := reqString(raw, "event_id")
 	if err != nil {

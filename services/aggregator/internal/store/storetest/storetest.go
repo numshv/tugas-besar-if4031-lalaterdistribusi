@@ -2,8 +2,11 @@ package storetest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -258,6 +261,105 @@ func Run(t *testing.T, newStore Factory) {
 		other, otherEpoch, _ := s.LoadCheckpoint(ctx, hazard.SourcePVMBG)
 		if other != "" || otherEpoch != 0 {
 			t.Fatal("fences must be per source")
+		}
+	})
+
+	t.Run("retract soft-deletes, keeps content, and a newer upsert revives", func(t *testing.T) {
+		s := newStore(t, NewClock().Now)
+		e := event("fire-1", hazard.TypeSeismic, 3)
+		mustUpsert(t, s, e, true)
+		first := mustGet(t, s, e.HazardID)
+
+		if _, applied, err := s.Retract(ctx, e.Source, e.SourceRefID, 3); err != nil || applied {
+			t.Fatalf("retract with same version: applied=%v err=%v, want no-op", applied, err)
+		}
+		stored, applied, err := s.Retract(ctx, e.Source, e.SourceRefID, 4)
+		if err != nil || !applied || !stored.Retracted || stored.Version != 4 {
+			t.Fatalf("retract v4: stored=%+v applied=%v err=%v", stored, applied, err)
+		}
+		got := mustGet(t, s, e.HazardID)
+		if !got.Retracted || got.AreaName != e.AreaName || !got.IngestedAt.Equal(first.IngestedAt) {
+			t.Fatalf("retract must keep content and ingested_at: %+v", got)
+		}
+
+		stale := e
+		stale.Version = 4
+		mustUpsert(t, s, stale, false)
+
+		revived := e
+		revived.Version = 5
+		mustUpsert(t, s, revived, true)
+		if got := mustGet(t, s, e.HazardID); got.Retracted {
+			t.Fatal("a newer upsert must clear retracted")
+		}
+	})
+
+	t.Run("nested attribute objects come back as objects", func(t *testing.T) {
+		s := newStore(t, NewClock().Now)
+		e := event("nested-1", hazard.TypeSeismic, 1)
+		e.Attributes = map[string]any{
+			"satellites": []any{"N20", "N21"},
+			"warning":    map[string]any{"threat": "Siaga", "zones": []any{"Padang"}},
+		}
+		mustUpsert(t, s, e, true)
+		got := mustGet(t, s, e.HazardID)
+		raw, err := json.Marshal(got.Attributes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := `{"satellites":["N20","N21"],"warning":{"threat":"Siaga","zones":["Padang"]}}`
+		if string(raw) != want {
+			t.Fatalf("attributes JSON = %s, want %s", raw, want)
+		}
+	})
+
+	t.Run("source_ref_ids and listing respect retracted visibility", func(t *testing.T) {
+		s := newStore(t, NewClock().Now)
+		for _, ref := range []string{"r1", "r2", "r3"} {
+			mustUpsert(t, s, event(ref, hazard.TypeSeismic, 1), true)
+		}
+		mustUpsert(t, s, event("v1", hazard.TypeVolcanic, 1), true)
+		if _, _, err := s.Retract(ctx, hazard.SourceBMKG, "r2", 2); err != nil {
+			t.Fatal(err)
+		}
+
+		visible, err := s.SourceRefIDs(ctx, hazard.SourceBMKG, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sort.Strings(visible.IDs)
+		if strings.Join(visible.IDs, ",") != "r1,r3" || visible.UnavailableUnits == nil {
+			t.Fatalf("visible ids = %v units=%v", visible.IDs, visible.UnavailableUnits)
+		}
+		all, _ := s.SourceRefIDs(ctx, hazard.SourceBMKG, true)
+		if len(all.IDs) != 3 {
+			t.Fatalf("with retracted = %v", all.IDs)
+		}
+		every, _ := s.SourceRefIDs(ctx, "", false)
+		if len(every.IDs) != 3 {
+			t.Fatalf("all sources (r1, r3, v1) = %v", every.IDs)
+		}
+
+		hidden := pageAll(t, s, store.LatestQuery{Source: hazard.SourceBMKG, Limit: 10}, nil)
+		shown := pageAll(t, s, store.LatestQuery{Source: hazard.SourceBMKG, Limit: 10, IncludeRetracted: true}, nil)
+		if len(hidden) != 2 || len(shown) != 3 {
+			t.Fatalf("list latest hidden=%v shown=%v", hidden, shown)
+		}
+	})
+
+	t.Run("retract before upsert leaves a tombstone that blocks older upserts", func(t *testing.T) {
+		s := newStore(t, NewClock().Now)
+		e := event("fire-2", hazard.TypeSeismic, 2)
+		stored, applied, err := s.Retract(ctx, e.Source, e.SourceRefID, 7)
+		if err != nil || !applied || stored.HazardID != e.HazardID || !stored.Retracted {
+			t.Fatalf("tombstone: stored=%+v applied=%v err=%v", stored, applied, err)
+		}
+		mustUpsert(t, s, e, false)
+		if got := mustGet(t, s, e.HazardID); !got.Retracted || got.Version != 7 {
+			t.Fatalf("older upsert revived a tombstone: %+v", got)
+		}
+		if _, _, err := s.Retract(ctx, "", "x", 1); !errors.Is(err, store.ErrInvalidEvent) {
+			t.Fatalf("retract without source err = %v, want ErrInvalidEvent", err)
 		}
 	})
 

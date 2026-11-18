@@ -61,6 +61,16 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: AUDIT_TOKENS
+              valueFrom:
+                secretKeyRef:
+                  name: bnpb-secrets
+                  key: AUDIT_TOKENS
+                  optional: true
+          volumeMounts:
+            - name: mapping-rules
+              mountPath: /etc/bnpb/mapping-rules
+              readOnly: true
           resources:
             requests:
               memory: 256Mi
@@ -70,3 +80,7 @@ spec:
             httpGet:
               path: /health
               port: 8083
+      volumes:
+        - name: mapping-rules
+          configMap:
+            name: aggregator-mapping-rules

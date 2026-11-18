@@ -114,6 +114,16 @@ func (m *Monitor) Snapshot() []UnitStatus {
 	return out
 }
 
+func (m *Monitor) ShardMembers(replicaSet string) []UnitStatus {
+	var out []UnitStatus
+	for _, s := range m.Snapshot() {
+		if s.ReplicaSet == replicaSet {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 func (m *Monitor) Unavailable() ([]string, []string) {
 	units := []string{}
 	alive := map[string]bool{}

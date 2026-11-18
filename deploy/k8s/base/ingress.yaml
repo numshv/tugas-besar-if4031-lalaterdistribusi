@@ -35,6 +35,27 @@ spec:
                 name: aggregator
                 port:
                   number: 8083
+          - path: /internal/ops
+            pathType: Prefix
+            backend:
+              service:
+                name: aggregator
+                port:
+                  number: 8083
+          - path: /internal/wildfire
+            pathType: Prefix
+            backend:
+              service:
+                name: wildfire-processor
+                port:
+                  number: 8086
+          - path: /field-reports
+            pathType: Prefix
+            backend:
+              service:
+                name: field-report-api
+                port:
+                  number: 8085
           - path: /
             pathType: Prefix
             backend:

@@ -216,6 +216,76 @@ max(sum by (node) (max by (node, unit) (rate(store_ops_total{op="insert"}[1m])))
 avg(sum by (node) (max by (node, unit) (rate(store_ops_total{op="insert"}[1m]))))
 ```
 
+### Writing HazardEvents from other services (`hazard-upserts`)
+
+The aggregator is the only writer of HazardEvents. Polled sources (BMKG, PVMBG) are stored
+directly; every other producer (wildfire processor, coastal ingester, dataset loader) sends
+messages to `bnpb.hazard-upserts.v1` (6 partitions, 7-day retention), which all aggregator
+replicas consume as group `bnpb.aggregator.hazard-upserts`. Build messages with
+`hazard.EncodeUpsert` instead of writing JSON by hand:
+
+```go
+enc, err := hazard.EncodeUpsert(hazard.UpsertMessage{
+    Op: hazard.OpUpsert, Source: hazard.SourceSatelit, SourceRefID: "fire-0a41c7", Version: 1042,
+    HazardType: hazard.TypeWildfire, Severity: hazard.SeveritySiaga, AreaName: "Kalimantan Tengah",
+    Latitude: -2.51234, Longitude: 113.8045, OccurredAt: occurredAt, Attributes: attrs,
+}, hazard.UpsertMeta{CorrelationID: cid, Traceparent: tp})
+// write enc.Key, enc.Value and enc.Headers to bnpb.hazard-upserts.v1
+```
+
+- The key `source|source_ref_id` keeps every update of one event on one partition, in order.
+- `version` must increase with every change of the same event (feed offset for wildfires,
+  `observed_at` in ms for coastal readings); an equal or lower version is ignored.
+- `op: retract` only needs `source`, `source_ref_id` and `version`: the event stays and is
+  marked retracted, and a later, higher version revives it.
+- The aggregator computes `hazard_id` and `ingested_at`; values sent by producers are ignored.
+- Invalid messages (bad JSON, invalid UTF-8, unknown op/source/type, version ≤ 0, over
+  1 MB) are parked and counted in `hazard_upserts_dead_lettered_total{reason}`; the
+  partition keeps moving. Storage or publish failures are retried in place and the offset is
+  committed only after the event is stored and published.
+- Stored events are re-published to `bnpb.hazard-events.v1` with headers `X-Hazard-Version`
+  and `X-Hazard-Op`; consumers deduplicate on `hazard_id` + version, so updates and
+  retractions are not mistaken for duplicates.
+- `hazard_store_latency_seconds{source}` measures `produced_at` → stored (P4 p95).
+
+### Latest events across every shard
+
+`GET /hazards` without `type` returns the newest events of every hazard type, newest
+`ingested_at` first, read across all shards. The body stays a JSON array like M1; paging uses
+`X-Next-Cursor`, and when part of the storage is unreachable the response carries
+`X-Partial: true` and `X-Unavailable-Units`. Retracted events are hidden. The aggregator
+caches the first page for 1 second and collapses concurrent misses into one query, so the
+load test target `GET /hazards?limit=50` does not hammer MongoDB.
+
+```bash
+curl -s -i -H "Authorization: Bearer $FIELD" "http://localhost:8080/hazards?limit=50"
+```
+
+### Audit API
+
+Served by the aggregator under `/internal/audit/*` (the ingress routes it there) and protected
+by `Authorization: Bearer <token>`, where the token is one of the comma-separated values in
+`AUDIT_TOKENS` (Secret `bnpb-secrets`). Without any token configured the endpoints answer 503
+`audit_not_configured`; at most 4 audit requests run at once, the rest get 429. Errors use
+`{"error":{"code":"...","message":"..."}}`; storage problems answer 503 or `partial: true`,
+never 500.
+
+| Endpoint | What it returns |
+|---|---|
+| `GET /internal/audit/events?source&since&limit&cursor` | Every HazardEvent field, ascending by `ingested_at` then `hazard_id`; `since` filters `ingested_at >=`; `limit` 1–1000 (default 100); `next_cursor` is `null` on the last page |
+| `GET /internal/audit/checksum?source` | `count` and SHA-256 over the `source_ref_id` values, sorted by byte, joined by `\n`, no trailing newline, lowercase hex. Without `source` it covers every source (`"source": null`) |
+| `GET /internal/audit/location?hazard_id` | The shard that holds the event (asked from mongos) and its reachable copies: `{node, unit, role}`; 404 if the event does not exist |
+
+`AUDIT_INCLUDE_RETRACTED` (default `false`) decides whether retracted events count in
+`/events` and `/checksum`; both endpoints always follow the same rule.
+
+```bash
+AUDIT=change-me-audit
+curl -s -H "Authorization: Bearer $AUDIT" "http://localhost:8083/internal/audit/checksum?source=BMKG"
+curl -s -H "Authorization: Bearer $AUDIT" "http://localhost:8083/internal/audit/events?limit=5"
+curl -s -H "Authorization: Bearer $AUDIT" "http://localhost:8083/internal/audit/location?hazard_id=<id>"
+```
+
 ## Test Scenarios
 
 Run these from the repository root in bash. The first block loads `.env` and defines
@@ -451,6 +521,156 @@ $DC logs bmkg-mock pvmbg-mock aggregator consumer-dashboard consumer-notifier co
 
 The same ID appears in the source mock, the aggregator's outbound calls, and every consumer.
 
+### M2 Problem 3: schema changes and the dead letter queue
+
+**Declared schema policy.** The aggregator accepts a change automatically when it
+does not touch a field the mapper requires: a new field, a missing optional field, or
+fields in a different order. A change to a required field (renamed, different type, or
+missing) is not guessed. The record is parked with reason `schema_incompatible` until
+Ops adapt the mapping rules. Required fields are `report_id`, `volcano_id`,
+`alert_level`, `reported_at` (PVMBG) and `event_id`, `magnitude`, `occurred_at` (BMKG).
+
+| PVMBG mock version | Change | Aggregator |
+| --- | --- | --- |
+| `2` | `confidence_level` added | accepted, kept in `attributes` |
+| `6` | `ash_column_height_m` removed | accepted |
+| `3` | `alert_level` renamed to `level` | parked |
+| `4` | `alert_level` becomes a number | parked |
+| `5` | `reported_at` removed | parked |
+
+**What is set aside, and how.**
+
+| Failure | Status | `retryable` | What happens next |
+| --- | --- | --- | --- |
+| Response cannot be read (truncated, invalid UTF-8, nested > 32, larger than 4 MiB) | `parked` | `false` | Whole body kept; the poll window is fetched again |
+| One record does not match the contract | `parked` | `false` | Only that record is kept; the rest of the response is stored |
+| Storage or Kafka unavailable | `retrying` | `true` | Retried after 1 s, 2 s, 4 s, ... up to 5 min; parked after 8 attempts |
+
+Messages are stored once (the id is a hash of the content) in the aggregator's
+`unprocessed` collection. The audit listing takes an assistants' audit token
+(`AUDIT_TOKENS`, comma separated). The ops endpoints take an audit token or an Internal
+Ops JWT; Media and Field tokens get 403.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /internal/audit/unprocessed?source=&limit=&cursor=` | Lampiran A listing (retrying and parked) |
+| `GET /internal/ops/unprocessed?source=&limit=&cursor=` | Same listing for Internal Ops |
+| `GET /internal/ops/unprocessed/{message_id}` | One message with its exact payload |
+| `POST /internal/ops/replay?source=PVMBG` | Reprocess every parked message of a source, oldest first |
+
+**Scenario** (Kubernetes, through the ingress on port 8090):
+
+```bash
+GW=http://localhost:8090
+kubectl -n sistem-informasi-kebencanaan-bnpb port-forward svc/pvmbg-mock 8082:8082 &
+PVMBG=http://localhost:8082
+AUDIT="${AUDIT_TOKENS%%,*}"
+OPS=$(curl -s -X POST "$GW/login" -H 'Content-Type: application/json' \
+  -d "{\"username\":\"$CLIENT_OPS_ID\",\"password\":\"$CLIENT_OPS_SECRET\"}" | field access_token)
+
+# 1. Incompatible change: records are parked, other sources keep flowing
+curl -s -X POST -H "$ADMIN" -d '{"version":3}' "$PVMBG/admin/schema-version"
+sleep 15
+curl -s -H "Authorization: Bearer $AUDIT" "$GW/internal/audit/unprocessed?source=PVMBG"
+
+# 2. Broken payloads: nothing crashes, the next responses are processed
+for k in truncated deep invalid_utf8 oversize; do
+  curl -s -X POST -H "$ADMIN" -d "{\"kind\":\"$k\",\"count\":1}" "$PVMBG/admin/corrupt"; sleep 5
+done
+kubectl -n sistem-informasi-kebencanaan-bnpb get pods -l app=aggregator   # RESTARTS stays 0
+
+# 3. Only Internal Ops may look
+code -H "Authorization: Bearer $MEDIA" "$GW/internal/ops/unprocessed"   # 403
+
+# 4. Adapt the system, then replay: everything recovers, no duplicates
+cp deploy/k8s/base/aggregator/mapping-rules.example.json deploy/k8s/base/aggregator/mapping-rules.json
+bash scripts/deploy.sh dev            # new ConfigMap hash restarts the aggregator
+curl -s -X POST -H "Authorization: Bearer $OPS" "$GW/internal/ops/replay?source=PVMBG"
+curl -s -H "Authorization: Bearer $AUDIT" "$GW/internal/audit/unprocessed?source=PVMBG"
+```
+
+After the replay only the four broken responses from step 2 are still listed. Their
+bytes can never be read, so they stay parked as evidence; the data they should have
+carried was fetched again by the next poll.
+
+### M2 Problem 3: field reports
+
+Tim Lapangan sends reports to `POST /field-reports` (served by `field-report-api`).
+The `Idempotency-Key` header is required: the client creates one key per report and
+reuses it on every retry. The key becomes the `report_id`.
+
+```bash
+curl -s -X POST "$GW/field-reports" -H "Authorization: Bearer $FIELD" \
+  -H "Idempotency-Key: $(uuidgen)" -H 'Content-Type: application/json' \
+  -d '{"hazard_type":"VOLCANIC","latitude":-7.54,"longitude":110.44,
+       "observed_at":"2026-11-18T08:00:00Z","description":"hujan abu di desa"}'
+curl -s "$GW/field-reports/<report_id>" -H "Authorization: Bearer $FIELD"   # pending or processed
+```
+
+| Field | Rule |
+| --- | --- |
+| `hazard_type` | `SEISMIC`, `VOLCANIC`, `WILDFIRE` or `COASTAL` |
+| `latitude`, `longitude` | required, valid coordinates |
+| `observed_at` | required, RFC 3339 |
+| `description` | required, at most 2000 characters |
+| `area_name`, `severity_estimate` | optional |
+
+**Delivery guarantee.** `202` is sent only after Kafka acknowledged the report with
+`acks=all`; if Kafka does not answer within 3 s the client gets `503` and retries with
+the same key. The aggregator reads the topic with at-least-once delivery (the offset
+is committed only after the report is stored, and a failing store is retried, never
+skipped) and stores idempotently (`report_id` is the document id, written only on
+insert). Together: every report that got `202` is processed exactly once in effect.
+Only `field` and `internal` scopes may send; `media` gets 403.
+
+`scripts/verify-field-reports.sh [count]` scales the aggregator to 0, sends reports
+while deleting a `field-report-api` pod every 3 s, resends some with the same key,
+brings the aggregator back and checks that every accepted report is stored once.
+
+### M2 Problem 4: wildfire stream
+
+`wildfire-processor` reads the Feed Satelit SSE stream, groups hotspots into fires
+(Definisi Kebakaran: confidence not low, ≤ 1.0 km and ≤ 360 min apart, chained, at least
+2 detections) and sends every change to `bnpb.hazard-upserts.v1`. The aggregator is the
+only writer of HazardEvents and applies a message only when its `version` is newer.
+
+| Decision | Choice |
+| --- | --- |
+| Source of truth | The feed itself. It replays from any offset, so the processor keeps its state in memory. After a restart it loads the newest snapshot and replays only the rest of the feed; without a usable snapshot it replays from offset 0. Nothing is sent until it reaches the offset that was latest at startup. |
+| Snapshot | Every 60 s and on shutdown, right after a batch reached Kafka: the whole engine state, gob + gzip, in the compacted topic `bnpb.wildfire-snapshots.v1` (one key, Kafka keeps the newest). Kafka is not tied to the processor's node, so a rescheduled pod finds it. A snapshot from another feed session or another config is ignored. Measured: 168k events → 5 MB, saved in 1.1 s, restored in 0.9 s; a full replay of 432k events took 94 s. |
+| Fire ID | `fire-` + hash of the detection that arrived first (lowest feed offset). Late detections arrive later, so they never rename a fire; a replay gives the same IDs. On a merge the older ID stays and the other is retracted. |
+| Version | Feed offset + 1 of the event that last changed the fire. A replay produces the same versions, so the aggregator ignores what it already has. |
+| Vanished fire | Retracted (`op: retract`), not deleted: the document stays with `retracted: true` and is hidden from the default listings. |
+| Lateness | Watermark = newest detection time − 360 min, capped by the feed's `virtual_now` from heartbeats. A detection older than the watermark is not applied but listed at `/internal/wildfire/late` and counted. Updates and retracts always apply. |
+| Final | A fire is final (`attributes.final`) once the watermark passes its last detection + 360 min: no new detection can join it any more. |
+| Province | Nearest centroid among 38 provinces, computed from a CC BY 4.0 GeoJSON (see `internal/fire/province.go`). |
+| Availability | 1 replica, `Recreate`, rescheduled 30 s after a node failure: the feed accepts one connection per group. |
+| Feed session reset | Detected (offset goes back or profile changes) and logged; raise `VERSION_EPOCH` so the new session's versions are newer than the stored ones. |
+
+Internal endpoints (audit token or Internal Ops JWT):
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /internal/wildfire/stats` | Offsets, lag, watermark, fires by state, single / late / low-confidence / duplicate counts, rebuild time |
+| `GET /internal/wildfire/fires` | Every current fire and a digest of them |
+| `GET /internal/wildfire/late?limit=&after_offset=` | Late detections |
+
+Metrics on `:8086/metrics`: `wildfire_lag_events`, `wildfire_watermark_lag_seconds`,
+`wildfire_feed_latest_offset`, `wildfire_processed_offset`, `wildfire_detections{state}`,
+`wildfire_fires{state}`, `wildfire_feed_reconnects_total{reason}`, `wildfire_offset_gaps`,
+`wildfire_rebuild_seconds`, `wildfire_restored_offset`, `wildfire_snapshot_offset`,
+`wildfire_snapshot_bytes`, `wildfire_emit_delay_seconds`. End-to-end latency (feed
+arrival until stored) is the aggregator's `hazard_store_latency_seconds{source="SATELIT"}`.
+
+Checks:
+
+```bash
+# Run the engine over a recorded feed and compare with an O(n^2) recomputation
+go run ./services/wildfire-processor/cmd/wildfire-check -in events.jsonl -out fires.json -snapshot
+# On the cluster: kill the processor, let the feed run ahead, compare with stored events
+scripts/verify-wildfire.sh
+```
+
 ## Configuration
 
 ### Ports
@@ -504,7 +724,7 @@ All variables live in `.env`, with example values in [`.env.example`](.env.examp
 | `PVMBG_SEED_COUNT` | `20` | Historical records created at startup (minimum 20) |
 | `PVMBG_EVENT_INTERVAL_SECONDS` | `10` | How often a new report appears |
 | `PVMBG_OUTAGE_MODE` | `error` | Behaviour during an outage: `error` answers 503 at once, `timeout` holds the request until the caller gives up |
-| `PVMBG_SCHEMA_VERSION` | `1` | Schema at startup: `1` without `confidence_level`, `2` with it |
+| `PVMBG_SCHEMA_VERSION` | `1` | Schema at startup, `1` to `6` (see the schema table under Source mocks) |
 
 **Aggregator**
 
@@ -571,9 +791,32 @@ The aggregator also reads `BMKG_API_KEY`, `PVMBG_TOKEN`, the `MONGO_*` values an
 | BMKG | `GET /seismic-events?since=` | `X-BMKG-Key: <key>` |
 | BMKG | `GET /tsunami-warnings?since=` | `X-BMKG-Key: <key>` |
 | PVMBG | `GET /volcanic-reports?since=` | `Authorization: Bearer pvmbg_v1.<secret>` |
-| PVMBG | `POST /admin/schema-version` with `{"version": 1 \| 2}` | `X-PVMBG-Admin-Token: <token>` |
+| PVMBG | `POST /admin/schema-version` with `{"version": 1..6}` | `X-PVMBG-Admin-Token: <token>` |
 | PVMBG | `POST /admin/outage` with `{"enabled": true \| false}` | `X-PVMBG-Admin-Token: <token>` |
+| PVMBG | `POST /admin/corrupt` with `{"kind": "...", "count": N}` | `X-PVMBG-Admin-Token: <token>` |
 | both | `GET /health` | none |
+
+PVMBG schema versions. Versions 3 to 6 build on version 2.
+
+| Version | Change | Kind |
+| --- | --- | --- |
+| `1` | Base contract, no `confidence_level` | baseline |
+| `2` | Adds `confidence_level` | compatible |
+| `3` | `alert_level` renamed to `level` | incompatible |
+| `4` | `alert_level` becomes a number (`1` Normal to `4` Awas) | incompatible |
+| `5` | Required `reported_at` removed | incompatible |
+| `6` | Optional `ash_column_height_m` removed | compatible |
+
+`POST /admin/corrupt` breaks the next `count` responses of `GET /volcanic-reports`
+(default 1, max 1000, `0` cancels), then the mock serves normal JSON again. `GET /health`
+shows what is still pending.
+
+| `kind` | Body served |
+| --- | --- |
+| `truncated` | Valid JSON cut in half |
+| `deep` | Arrays nested 100,000 levels deep |
+| `invalid_utf8` | A string value starting with bytes `0xff 0xfe` |
+| `oversize` | Valid JSON padded past 8 MiB |
 
 - `since` is an RFC 3339 timestamp and is inclusive. Without it, all records are returned.
 - Tsunami warnings are filtered by the time of their related seismic event, since the
@@ -647,7 +890,9 @@ tugas-besar-if4031-lalaterdistribusi/
 │   ├── client-api/               # Public API with scope-based field filtering
 │   ├── consumer-dashboard/       # Kafka consumer: dashboard summary
 │   ├── consumer-notifier/        # Kafka consumer: SIAGA and AWAS notifications
-│   └── consumer-regional/        # Kafka consumer: regional feed
+│   ├── consumer-regional/        # Kafka consumer: regional feed
+│   ├── field-report-api/         # POST /field-reports for Tim Lapangan
+│   └── wildfire-processor/       # Feed Satelit stream to wildfire HazardEvents
 │
 ├── scripts/
 │   ├── gen-keys.sh               # Generates the JWT signing key

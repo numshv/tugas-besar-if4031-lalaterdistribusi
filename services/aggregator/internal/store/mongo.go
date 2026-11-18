@@ -37,7 +37,8 @@ func NewMongoClient(ctx context.Context, uri string) (*mongo.Client, error) {
 		SetConnectTimeout(10 * time.Second).
 		SetServerSelectionTimeout(10 * time.Second).
 		SetMaxPoolSize(50).
-		SetRetryWrites(true)
+		SetRetryWrites(true).
+		SetBSONOptions(&options.BSONOptions{DefaultDocumentM: true})
 
 	client, err := mongo.Connect(ctx, clientOpts)
 	if err != nil {
@@ -115,6 +116,7 @@ type document struct {
 	IngestedAt  time.Time      `bson:"ingested_at"`
 	Attributes  map[string]any `bson:"attributes"`
 	Version     int64          `bson:"version"`
+	Retracted   bool           `bson:"retracted"`
 }
 
 func contentFields(e hazard.Event) bson.M {
@@ -133,6 +135,7 @@ func contentFields(e hazard.Event) bson.M {
 		"occurred_at":   e.OccurredAt,
 		"attributes":    attrs,
 		"version":       e.Version,
+		"retracted":     e.Retracted,
 	}
 }
 
@@ -146,8 +149,45 @@ func fromDocument(d document) hazard.Event {
 		HazardType: hazard.Type(d.HazardType), Severity: hazard.Severity(d.Severity),
 		AreaName: d.AreaName, Latitude: d.Latitude, Longitude: d.Longitude,
 		OccurredAt: d.OccurredAt.UTC(), IngestedAt: d.IngestedAt.UTC(), Attributes: attrs,
-		Version: d.Version,
+		Version: d.Version, Retracted: d.Retracted,
 	}
+}
+
+func (s *MongoStore) Retract(ctx context.Context, source hazard.Source, sourceRefID string, version int64) (hazard.Event, bool, error) {
+	if err := validateRetract(source, sourceRefID); err != nil {
+		return hazard.Event{}, false, err
+	}
+	defer observe("retract", time.Now())
+	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
+	defer cancel()
+
+	id := hazard.NewID(source, sourceRefID)
+	filter := bson.M{
+		"_id": id,
+		"$or": bson.A{
+			bson.M{"version": bson.M{"$lt": version}},
+			bson.M{"version": bson.M{"$exists": false}},
+		},
+	}
+	update := bson.M{
+		"$set": bson.M{"retracted": true, "version": version},
+		"$setOnInsert": bson.M{
+			"source":        string(source),
+			"source_ref_id": sourceRefID,
+			"attributes":    bson.M{},
+			"ingested_at":   ingestTime(s.now),
+		},
+	}
+	var d document
+	err := s.col.FindOneAndUpdate(ctx, filter, update,
+		options.FindOneAndUpdate().SetUpsert(true).SetReturnDocument(options.After)).Decode(&d)
+	if mongo.IsDuplicateKeyError(err) {
+		return hazard.Event{}, false, nil
+	}
+	if err != nil {
+		return hazard.Event{}, false, fmt.Errorf("retract hazard_id=%s: %w", id, err)
+	}
+	return fromDocument(d), true, nil
 }
 
 func (s *MongoStore) Upsert(ctx context.Context, e hazard.Event) (hazard.Event, bool, error) {
@@ -340,6 +380,9 @@ func (s *MongoStore) ListLatest(ctx context.Context, q LatestQuery) (LatestPage,
 	if !q.Since.IsZero() {
 		conds = append(conds, bson.M{"ingested_at": bson.M{"$gte": q.Since.UTC()}})
 	}
+	if !q.IncludeRetracted {
+		conds = append(conds, bson.M{"retracted": bson.M{"$ne": true}})
+	}
 	op, dir := "$lt", -1
 	if q.Ascending {
 		op, dir = "$gt", 1
@@ -373,6 +416,95 @@ func (s *MongoStore) ListLatest(ctx context.Context, q LatestQuery) (LatestPage,
 		page.NextCursor = encodeLatestCursor(q, page.Items[q.Limit-1])
 	}
 	return page, nil
+}
+
+const scanTimeout = 20 * time.Second
+
+func (s *MongoStore) SourceRefIDs(ctx context.Context, source hazard.Source, includeRetracted bool) (RefIDs, error) {
+	defer observe("source_ref_ids", time.Now())
+	ctx, cancel := context.WithTimeout(ctx, scanTimeout)
+	defer cancel()
+
+	filter := bson.M{}
+	if source != "" {
+		filter["source"] = string(source)
+	}
+	if !includeRetracted {
+		filter["retracted"] = bson.M{"$ne": true}
+	}
+	cur, err := s.col.Find(ctx, filter, options.Find().
+		SetProjection(bson.M{"_id": 0, "source_ref_id": 1}).
+		SetAllowPartialResults(true).
+		SetBatchSize(5000).
+		SetMaxTime(scanTimeout))
+	if err != nil {
+		return RefIDs{}, fmt.Errorf("scan source_ref_id: %w", err)
+	}
+	defer cur.Close(ctx)
+
+	ids := []string{}
+	for cur.Next(ctx) {
+		var row struct {
+			SourceRefID string `bson:"source_ref_id"`
+		}
+		if err := cur.Decode(&row); err != nil {
+			return RefIDs{}, fmt.Errorf("decode source_ref_id: %w", err)
+		}
+		ids = append(ids, row.SourceRefID)
+	}
+	if err := cur.Err(); err != nil {
+		return RefIDs{}, fmt.Errorf("scan source_ref_id: %w", err)
+	}
+	out := RefIDs{IDs: ids}
+	out.Partial, out.UnavailableUnits = partialStatus(s.health, s.mode, false)
+	if out.Partial {
+		partialReads.WithLabelValues("source_ref_ids").Inc()
+	}
+	return out, nil
+}
+
+var ErrNoShard = errors.New("no shard found in query plan")
+
+func (s *MongoStore) ShardOf(ctx context.Context, hazardID string) (string, error) {
+	defer observe("shard_of", time.Now())
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
+	cmd := bson.D{
+		{Key: "explain", Value: bson.D{
+			{Key: "find", Value: s.col.Name()},
+			{Key: "filter", Value: bson.D{{Key: "_id", Value: hazardID}}},
+		}},
+		{Key: "verbosity", Value: "queryPlanner"},
+	}
+	var plan bson.M
+	if err := s.db.RunCommand(ctx, cmd).Decode(&plan); err != nil {
+		return "", fmt.Errorf("explain hazard_id=%s: %w", hazardID, err)
+	}
+	if shard := findShardName(plan); shard != "" {
+		return shard, nil
+	}
+	return "", ErrNoShard
+}
+
+func findShardName(v any) string {
+	switch node := v.(type) {
+	case bson.M:
+		if name, ok := node["shardName"].(string); ok && name != "" {
+			return name
+		}
+		for _, child := range node {
+			if name := findShardName(child); name != "" {
+				return name
+			}
+		}
+	case bson.A:
+		for _, child := range node {
+			if name := findShardName(child); name != "" {
+				return name
+			}
+		}
+	}
+	return ""
 }
 
 type findReply struct {

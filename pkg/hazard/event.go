@@ -5,8 +5,10 @@ import "time"
 type Source string
 
 const (
-	SourceBMKG  Source = "BMKG"
-	SourcePVMBG Source = "PVMBG"
+	SourceBMKG         Source = "BMKG"
+	SourcePVMBG        Source = "PVMBG"
+	SourceSatelit      Source = "SATELIT"
+	SourceSensorPantai Source = "SENSOR_PANTAI"
 )
 
 type Type string
@@ -14,7 +16,33 @@ type Type string
 const (
 	TypeSeismic  Type = "SEISMIC"
 	TypeVolcanic Type = "VOLCANIC"
+	TypeWildfire Type = "WILDFIRE"
+	TypeCoastal  Type = "COASTAL"
 )
+
+func (s Source) Known() bool {
+	switch s {
+	case SourceBMKG, SourcePVMBG, SourceSatelit, SourceSensorPantai:
+		return true
+	}
+	return false
+}
+
+func (t Type) Known() bool {
+	switch t {
+	case TypeSeismic, TypeVolcanic, TypeWildfire, TypeCoastal:
+		return true
+	}
+	return false
+}
+
+func (s Severity) Known() bool {
+	switch s {
+	case SeverityNormal, SeverityWaspada, SeveritySiaga, SeverityAwas:
+		return true
+	}
+	return false
+}
 
 type Severity string
 
@@ -39,7 +67,8 @@ type Event struct {
 
 	Attributes map[string]any `json:"attributes" bson:"attributes"`
 
-	Version int64 `json:"-" bson:"version"`
+	Version   int64 `json:"-" bson:"version"`
+	Retracted bool  `json:"-" bson:"retracted"`
 }
 
 var SummaryFields = []string{
