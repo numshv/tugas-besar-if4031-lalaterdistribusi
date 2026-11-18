@@ -44,6 +44,18 @@ func Load() error {
 		configured[username] = credential{password: password, scope: client.scope}
 	}
 
+	analyticsID, analyticsSecret := os.Getenv("CLIENT_ANALYTICS_ID"), os.Getenv("CLIENT_ANALYTICS_SECRET")
+	switch {
+	case analyticsSecret == "":
+	case analyticsID == "":
+		return fmt.Errorf("CLIENT_ANALYTICS_SECRET is set but CLIENT_ANALYTICS_ID is empty")
+	default:
+		if _, exists := configured[analyticsID]; exists {
+			return fmt.Errorf("duplicate client ID configured in CLIENT_ANALYTICS_ID")
+		}
+		configured[analyticsID] = credential{password: analyticsSecret, scope: "analytics"}
+	}
+
 	store = configured
 	return nil
 }

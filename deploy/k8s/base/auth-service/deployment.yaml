@@ -43,6 +43,12 @@ spec:
                 secretKeyRef:
                   name: bnpb-secrets
                   key: CLIENT_OPS_SECRET
+            - name: CLIENT_ANALYTICS_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: bnpb-secrets
+                  key: CLIENT_ANALYTICS_SECRET
+                  optional: true
           volumeMounts:
             - name: jwt-key
               mountPath: /run/keys

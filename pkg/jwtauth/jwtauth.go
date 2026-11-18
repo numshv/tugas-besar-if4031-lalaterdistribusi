@@ -19,9 +19,10 @@ import (
 )
 
 const (
-	ScopeMedia    = "media"
-	ScopeField    = "field"
-	ScopeInternal = "internal"
+	ScopeMedia     = "media"
+	ScopeField     = "field"
+	ScopeInternal  = "internal"
+	ScopeAnalytics = "analytics"
 )
 
 var ErrInvalidToken = errors.New("token is invalid or expired")
@@ -155,7 +156,7 @@ func (v Verifier) Verify(token string) (scope, subject string, err error) {
 		return "", "", ErrInvalidToken
 	}
 	switch scope {
-	case ScopeMedia, ScopeField, ScopeInternal:
+	case ScopeMedia, ScopeField, ScopeInternal, ScopeAnalytics:
 		return scope, subject, nil
 	}
 	return "", "", ErrInvalidToken
