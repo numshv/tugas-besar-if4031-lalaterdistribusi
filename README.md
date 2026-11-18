@@ -627,6 +627,47 @@ Only `field` and `internal` scopes may send; `media` gets 403.
 while deleting a `field-report-api` pod every 3 s, resends some with the same key,
 brings the aggregator back and checks that every accepted report is stored once.
 
+### M2 Problem 4: wildfire stream
+
+`wildfire-processor` reads the Feed Satelit SSE stream, groups hotspots into fires
+(Definisi Kebakaran: confidence not low, ≤ 1.0 km and ≤ 360 min apart, chained, at least
+2 detections) and sends every change to `bnpb.hazard-upserts.v1`. The aggregator is the
+only writer of HazardEvents and applies a message only when its `version` is newer.
+
+| Decision | Choice |
+| --- | --- |
+| Source of truth | The feed itself. It replays from any offset, so the processor keeps its state in memory and rebuilds by reading from offset 0 after a restart. Nothing is sent until the rebuild reaches the offset that was latest at startup. |
+| Fire ID | `fire-` + hash of the detection that arrived first (lowest feed offset). Late detections arrive later, so they never rename a fire; a replay gives the same IDs. On a merge the older ID stays and the other is retracted. |
+| Version | Feed offset + 1 of the event that last changed the fire. A replay produces the same versions, so the aggregator ignores what it already has. |
+| Vanished fire | Retracted (`op: retract`), not deleted: the document stays with `retracted: true` and is hidden from the default listings. |
+| Lateness | Watermark = newest detection time − 360 min, capped by the feed's `virtual_now` from heartbeats. A detection older than the watermark is not applied but listed at `/internal/wildfire/late` and counted. Updates and retracts always apply. |
+| Final | A fire is final (`attributes.final`) once the watermark passes its last detection + 360 min: no new detection can join it any more. |
+| Province | Nearest centroid among 38 provinces, computed from a CC BY 4.0 GeoJSON (see `internal/fire/province.go`). |
+| Availability | 1 replica, `Recreate`, rescheduled 30 s after a node failure: the feed accepts one connection per group. |
+
+Internal endpoints (audit token or Internal Ops JWT):
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /internal/wildfire/stats` | Offsets, lag, watermark, fires by state, single / late / low-confidence / duplicate counts, rebuild time |
+| `GET /internal/wildfire/fires` | Every current fire and a digest of them |
+| `GET /internal/wildfire/late?limit=&after_offset=` | Late detections |
+
+Metrics on `:8086/metrics`: `wildfire_lag_events`, `wildfire_watermark_lag_seconds`,
+`wildfire_feed_latest_offset`, `wildfire_processed_offset`, `wildfire_detections{state}`,
+`wildfire_fires{state}`, `wildfire_feed_reconnects_total{reason}`, `wildfire_offset_gaps`,
+`wildfire_rebuild_seconds`, `wildfire_emit_delay_seconds`. End-to-end latency (feed
+arrival until stored) is the aggregator's `hazard_store_latency_seconds{source="SATELIT"}`.
+
+Checks:
+
+```bash
+# Run the engine over a recorded feed and compare with an O(n^2) recomputation
+go run ./services/wildfire-processor/cmd/wildfire-check -in events.jsonl -out fires.json
+# On the cluster: kill the processor, let the feed run ahead, compare with stored events
+scripts/verify-wildfire.sh
+```
+
 ## Configuration
 
 ### Ports
@@ -846,7 +887,9 @@ tugas-besar-if4031-lalaterdistribusi/
 │   ├── client-api/               # Public API with scope-based field filtering
 │   ├── consumer-dashboard/       # Kafka consumer: dashboard summary
 │   ├── consumer-notifier/        # Kafka consumer: SIAGA and AWAS notifications
-│   └── consumer-regional/        # Kafka consumer: regional feed
+│   ├── consumer-regional/        # Kafka consumer: regional feed
+│   ├── field-report-api/         # POST /field-reports for Tim Lapangan
+│   └── wildfire-processor/       # Feed Satelit stream to wildfire HazardEvents
 │
 ├── scripts/
 │   ├── gen-keys.sh               # Generates the JWT signing key
