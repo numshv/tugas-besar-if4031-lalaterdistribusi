@@ -18,17 +18,18 @@ type Record struct {
 }
 
 type Columns struct {
-	ID, Time, Date, Clock, Lat, Lon, Mag, Depth, Region string
+	ID, Time, Date, Clock, Lat, Lon, Mag, Depth, Region, Tsunami string
 }
 
 var candidates = map[string][]string{
-	"id":     {"id", "event_id", "eventid", "event id", "kode", "kode_gempa"},
-	"time":   {"time", "datetime", "origin_time", "origintime", "occurred_at", "waktu", "timestamp"},
-	"lat":    {"latitude", "lat", "lintang", "epicenter_lat"},
-	"lon":    {"longitude", "lon", "lng", "long", "bujur", "epicenter_lon"},
-	"mag":    {"mag", "magnitude", "magnitudo", "m"},
-	"depth":  {"depth", "depth_km", "kedalaman", "depth (km)"},
-	"region": {"place", "region", "region_name", "area", "area_name", "wilayah", "lokasi", "remark"},
+	"id":      {"id", "event_id", "eventid", "event id", "kode", "kode_gempa"},
+	"time":    {"time", "datetime", "origin_time", "origintime", "occurred_at", "waktu", "timestamp"},
+	"lat":     {"latitude", "lat", "lintang", "epicenter_lat"},
+	"lon":     {"longitude", "lon", "lng", "long", "bujur", "epicenter_lon"},
+	"mag":     {"mag", "magnitude", "magnitudo", "m"},
+	"depth":   {"depth", "depth_km", "kedalaman", "depth (km)"},
+	"region":  {"place", "region", "region_name", "area", "area_name", "wilayah", "lokasi", "remark"},
+	"tsunami": {"tsunami", "potential_tsunami", "potensi_tsunami"},
 }
 
 func pick(header []string, override string, want string) string {
@@ -47,15 +48,16 @@ func pick(header []string, override string, want string) string {
 
 func ResolveColumns(header []string, override Columns) (Columns, error) {
 	cols := Columns{
-		ID:     pick(header, override.ID, "id"),
-		Time:   pick(header, override.Time, "time"),
-		Date:   override.Date,
-		Clock:  override.Clock,
-		Lat:    pick(header, override.Lat, "lat"),
-		Lon:    pick(header, override.Lon, "lon"),
-		Mag:    pick(header, override.Mag, "mag"),
-		Depth:  pick(header, override.Depth, "depth"),
-		Region: pick(header, override.Region, "region"),
+		ID:      pick(header, override.ID, "id"),
+		Time:    pick(header, override.Time, "time"),
+		Date:    override.Date,
+		Clock:   override.Clock,
+		Lat:     pick(header, override.Lat, "lat"),
+		Lon:     pick(header, override.Lon, "lon"),
+		Mag:     pick(header, override.Mag, "mag"),
+		Depth:   pick(header, override.Depth, "depth"),
+		Region:  pick(header, override.Region, "region"),
+		Tsunami: pick(header, override.Tsunami, "tsunami"),
 	}
 	present := map[string]bool{}
 	for _, h := range header {

@@ -212,3 +212,17 @@ func TestGenerateIsDeterministicAndSkewed(t *testing.T) {
 		t.Fatalf("message json = %s", raw)
 	}
 }
+
+func TestTsunamiColumnBecomesPotentialTsunami(t *testing.T) {
+	data := "id,time,lat,lon,mag,tsunami\nT1,2024-01-01 00:00:00,-6,106,7.4,1\nT2,2024-01-01 00:00:00,-6,106,5.0,0\n"
+	_, msgs, err := loadString(t, data, "csv", Columns{}, Options{})
+	if err != nil || len(msgs) != 2 {
+		t.Fatalf("err=%v msgs=%d", err, len(msgs))
+	}
+	if msgs[0].Attributes["potential_tsunami"] != true || msgs[1].Attributes["potential_tsunami"] != false {
+		t.Fatalf("attributes = %v / %v", msgs[0].Attributes, msgs[1].Attributes)
+	}
+	if _, leaked := msgs[0].Attributes["tsunami"]; leaked {
+		t.Fatal("the raw tsunami column must be replaced, not copied")
+	}
+}

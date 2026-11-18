@@ -47,6 +47,7 @@ func run() error {
 	flag.StringVar(&cols.Mag, "col-mag", "", "magnitude column")
 	flag.StringVar(&cols.Depth, "col-depth", "", "depth column")
 	flag.StringVar(&cols.Region, "col-region", "", "region / area column")
+	flag.StringVar(&cols.Tsunami, "col-tsunami", "", "tsunami flag column (1/true marks a potential tsunami)")
 	runID := flag.String("run", "", "spike/cleanup run id (part of every sim-spike id)")
 	count := flag.Int("count", 1000, "events to generate (spike, cleanup, generate)")
 	region := flag.String("region", "Selatan Jawa Barat", "spike: area_name of the burst")

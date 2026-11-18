@@ -91,7 +91,7 @@ func (c *Converter) Message(rec Record) (hazard.UpsertMessage, error) {
 	}
 
 	used := map[string]bool{cols.ID: true, cols.Time: true, cols.Date: true, cols.Clock: true,
-		cols.Lat: true, cols.Lon: true, cols.Mag: true, cols.Depth: true, cols.Region: true}
+		cols.Lat: true, cols.Lon: true, cols.Mag: true, cols.Depth: true, cols.Region: true, cols.Tsunami: true}
 	raw := map[string]any{
 		"event_id":      id,
 		"magnitude":     mag,
@@ -106,6 +106,9 @@ func (c *Converter) Message(rec Record) (hazard.UpsertMessage, error) {
 			return hazard.UpsertMessage{}, err
 		}
 		raw["depth_km"] = depth
+	}
+	if cols.Tsunami != "" {
+		raw["potential_tsunami"] = truthy(rec.Fields[cols.Tsunami])
 	}
 	for k, v := range rec.Fields {
 		if !used[k] && k != "" {
@@ -132,4 +135,12 @@ func ToMessage(raw map[string]any) (hazard.UpsertMessage, error) {
 		return hazard.UpsertMessage{}, err
 	}
 	return msg, nil
+}
+
+func truthy(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "y", "ya":
+		return true
+	}
+	return false
 }

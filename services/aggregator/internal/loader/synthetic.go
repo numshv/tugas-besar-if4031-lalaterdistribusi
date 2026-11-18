@@ -79,7 +79,7 @@ func pickZone(r *rand.Rand) (zone, bool) {
 func Generate(w io.Writer, count int, seed uint64) error {
 	r := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
 	cw := csv.NewWriter(w)
-	if err := cw.Write([]string{"id", "time", "latitude", "longitude", "depth", "mag", "place"}); err != nil {
+	if err := cw.Write([]string{"id", "time", "latitude", "longitude", "depth", "mag", "place", "tsunami"}); err != nil {
 		return err
 	}
 	for i := range count {
@@ -93,10 +93,15 @@ func Generate(w io.Writer, count int, seed uint64) error {
 		}
 		at := catalogStart.Add(time.Duration(r.Int64N(int64(catalogSpan/time.Second))) * time.Second)
 		depth := math.Round(math.Min(5+r.ExpFloat64()*35, 650)*10) / 10
+		mag := gutenbergRichter(r, 3.0, 9.0)
+		tsunami := "0"
+		if mag >= 7.0 && depth < 70 {
+			tsunami = "1"
+		}
 		row := []string{
 			fmt.Sprintf("cat-%07d", i+1), at.Format("2006-01-02 15:04:05"),
 			strconv.FormatFloat(lat, 'f', -1, 64), strconv.FormatFloat(lon, 'f', -1, 64),
-			strconv.FormatFloat(depth, 'f', -1, 64), strconv.FormatFloat(gutenbergRichter(r, 3.0, 9.0), 'f', -1, 64), place,
+			strconv.FormatFloat(depth, 'f', -1, 64), strconv.FormatFloat(mag, 'f', -1, 64), place, tsunami,
 		}
 		if err := cw.Write(row); err != nil {
 			return err
