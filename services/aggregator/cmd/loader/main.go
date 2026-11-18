@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 	_ "time/tzdata"
@@ -77,7 +76,7 @@ func run() error {
 
 	var sender *loader.KafkaSender
 	if !*dryRun {
-		sender = loader.NewKafkaSender(strings.Split(*brokers, ","), *topic)
+		sender = loader.NewKafkaSender(envx.SplitList(*brokers), *topic)
 		defer sender.Close()
 	}
 

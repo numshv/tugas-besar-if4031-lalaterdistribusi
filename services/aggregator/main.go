@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -252,7 +251,7 @@ func loadConfig() (config, error) {
 		PVMBGToken:            os.Getenv("PVMBG_TOKEN"),
 		MongoURI:              os.Getenv("MONGO_URI"),
 		MongoDB:               os.Getenv("MONGO_DB"),
-		KafkaBrokers:          strings.Split(os.Getenv("KAFKA_BROKERS"), ","),
+		KafkaBrokers:          envx.List("KAFKA_BROKERS"),
 		KafkaTopic:            os.Getenv("KAFKA_TOPIC"),
 		UpsertsTopic:          os.Getenv("KAFKA_UPSERTS_TOPIC"),
 		UpsertsGroup:          envx.String("KAFKA_UPSERTS_GROUP", "bnpb.aggregator.hazard-upserts"),
