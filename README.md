@@ -636,7 +636,8 @@ only writer of HazardEvents and applies a message only when its `version` is new
 
 | Decision | Choice |
 | --- | --- |
-| Source of truth | The feed itself. It replays from any offset, so the processor keeps its state in memory and rebuilds by reading from offset 0 after a restart. Nothing is sent until the rebuild reaches the offset that was latest at startup. |
+| Source of truth | The feed itself. It replays from any offset, so the processor keeps its state in memory. After a restart it loads the newest snapshot and replays only the rest of the feed; without a usable snapshot it replays from offset 0. Nothing is sent until it reaches the offset that was latest at startup. |
+| Snapshot | Every 60 s and on shutdown, right after a batch reached Kafka: the whole engine state, gob + gzip, in the compacted topic `bnpb.wildfire-snapshots.v1` (one key, Kafka keeps the newest). Kafka is not tied to the processor's node, so a rescheduled pod finds it. A snapshot from another feed session or another config is ignored. Measured: 168k events → 5 MB, saved in 1.1 s, restored in 0.9 s; a full replay of 432k events took 94 s. |
 | Fire ID | `fire-` + hash of the detection that arrived first (lowest feed offset). Late detections arrive later, so they never rename a fire; a replay gives the same IDs. On a merge the older ID stays and the other is retracted. |
 | Version | Feed offset + 1 of the event that last changed the fire. A replay produces the same versions, so the aggregator ignores what it already has. |
 | Vanished fire | Retracted (`op: retract`), not deleted: the document stays with `retracted: true` and is hidden from the default listings. |
@@ -644,6 +645,7 @@ only writer of HazardEvents and applies a message only when its `version` is new
 | Final | A fire is final (`attributes.final`) once the watermark passes its last detection + 360 min: no new detection can join it any more. |
 | Province | Nearest centroid among 38 provinces, computed from a CC BY 4.0 GeoJSON (see `internal/fire/province.go`). |
 | Availability | 1 replica, `Recreate`, rescheduled 30 s after a node failure: the feed accepts one connection per group. |
+| Feed session reset | Detected (offset goes back or profile changes) and logged; raise `VERSION_EPOCH` so the new session's versions are newer than the stored ones. |
 
 Internal endpoints (audit token or Internal Ops JWT):
 
@@ -656,14 +658,15 @@ Internal endpoints (audit token or Internal Ops JWT):
 Metrics on `:8086/metrics`: `wildfire_lag_events`, `wildfire_watermark_lag_seconds`,
 `wildfire_feed_latest_offset`, `wildfire_processed_offset`, `wildfire_detections{state}`,
 `wildfire_fires{state}`, `wildfire_feed_reconnects_total{reason}`, `wildfire_offset_gaps`,
-`wildfire_rebuild_seconds`, `wildfire_emit_delay_seconds`. End-to-end latency (feed
+`wildfire_rebuild_seconds`, `wildfire_restored_offset`, `wildfire_snapshot_offset`,
+`wildfire_snapshot_bytes`, `wildfire_emit_delay_seconds`. End-to-end latency (feed
 arrival until stored) is the aggregator's `hazard_store_latency_seconds{source="SATELIT"}`.
 
 Checks:
 
 ```bash
 # Run the engine over a recorded feed and compare with an O(n^2) recomputation
-go run ./services/wildfire-processor/cmd/wildfire-check -in events.jsonl -out fires.json
+go run ./services/wildfire-processor/cmd/wildfire-check -in events.jsonl -out fires.json -snapshot
 # On the cluster: kill the processor, let the feed run ahead, compare with stored events
 scripts/verify-wildfire.sh
 ```
