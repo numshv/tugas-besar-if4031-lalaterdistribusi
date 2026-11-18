@@ -79,7 +79,6 @@ func (k *Kafka) Save(ctx context.Context, s *fire.Snapshot) (int, error) {
 	return len(b), k.w.WriteMessages(ctx, kafka.Message{Key: []byte(key), Value: b})
 }
 
-// Load returns the newest snapshot, or nil when the topic is empty.
 func (k *Kafka) Load(ctx context.Context) (*fire.Snapshot, error) {
 	var lastErr error
 	for _, broker := range k.Brokers {

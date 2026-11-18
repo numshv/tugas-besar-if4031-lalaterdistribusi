@@ -29,7 +29,6 @@ type SourceRules struct {
 	Defaults map[string]string         `json:"defaults,omitempty"`
 }
 
-// Rules are keyed by source (BMKG, PVMBG, ...).
 type Rules map[string]SourceRules
 
 // Load treats an empty path or a missing file as no rules.

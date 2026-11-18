@@ -2,7 +2,6 @@ package geo
 
 import "math"
 
-// Province is one entry of the static reference table.
 type Province struct {
 	Name     string
 	Lat, Lon float64

@@ -1,4 +1,3 @@
-// Package feed talks to the Feed Satelit: the session endpoint and the SSE stream.
 package feed
 
 import (

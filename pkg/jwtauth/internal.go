@@ -7,9 +7,6 @@ import (
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/httpx"
 )
 
-// RequireInternal lets a request through when it carries one of the
-// assistants' audit tokens or a JWT with scope "internal". Media and Field
-// tokens get 403 with forbidden as the message.
 func RequireInternal(v *Verifier, auditTokens []string, forbidden string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

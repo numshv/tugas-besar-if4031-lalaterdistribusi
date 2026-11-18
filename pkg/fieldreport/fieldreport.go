@@ -1,5 +1,3 @@
-// Package fieldreport is the message Tim Lapangan sends through POST /field-reports,
-// shared by field-report-api (producer) and the aggregator (consumer).
 package fieldreport
 
 import (
@@ -23,10 +21,8 @@ const (
 
 var keyPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{8,128}$`)
 
-// ValidKey reports whether k can be used as an Idempotency-Key and report_id.
 func ValidKey(k string) bool { return keyPattern.MatchString(k) }
 
-// Input is the request body.
 type Input struct {
 	HazardType       hazard.Type `json:"hazard_type"`
 	Latitude         *float64    `json:"latitude"`
@@ -37,7 +33,6 @@ type Input struct {
 	SeverityEstimate string      `json:"severity_estimate,omitempty"`
 }
 
-// Report is what goes to Kafka and is stored by the aggregator.
 type Report struct {
 	ReportID   string    `json:"report_id"`
 	Reporter   string    `json:"reporter"`
@@ -52,7 +47,6 @@ var hazardTypes = map[hazard.Type]bool{
 
 var severities = map[string]bool{"": true, "NORMAL": true, "WASPADA": true, "SIAGA": true, "AWAS": true}
 
-// Validate returns the first problem with the input, or nil.
 func (in Input) Validate() error {
 	switch {
 	case !hazardTypes[in.HazardType]:

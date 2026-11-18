@@ -24,7 +24,7 @@ const (
 type Kind string
 
 const (
-	KindResponse Kind = "response" // a whole response that could not be read
+	KindResponse Kind = "response"
 	KindRecord   Kind = "record"
 )
 
@@ -78,7 +78,6 @@ func Backoff(attempts int) time.Duration {
 	return min(d, MaxBackoff)
 }
 
-// ReportedStatus maps to the two statuses the audit contract knows.
 func (m Message) ReportedStatus() Status {
 	if m.Status == StatusReplaying {
 		return StatusParked

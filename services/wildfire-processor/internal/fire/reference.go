@@ -2,7 +2,6 @@ package fire
 
 import "sort"
 
-// Clusters returns the detection keys of every current fire, sorted.
 func (e *Engine) Clusters() [][]string {
 	var out [][]string
 	for _, f := range e.Fires() {

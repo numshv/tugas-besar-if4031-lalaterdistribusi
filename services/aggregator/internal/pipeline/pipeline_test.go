@@ -118,7 +118,6 @@ func TestReplayAfterRulesRecoversWithoutDuplicates(t *testing.T) {
 		t.Fatalf("parked %d messages, want 3", n)
 	}
 
-	// Nothing changed yet: replay keeps them parked.
 	res, err := p.Replay(ctx, "PVMBG")
 	if err != nil || res.Recovered != 0 || res.Parked != 3 {
 		t.Fatalf("replay before adapting = %+v, %v", res, err)
@@ -166,7 +165,6 @@ func TestMalformedResponseIsParkedWholeAndPollFails(t *testing.T) {
 			t.Errorf("message = %+v", m)
 		}
 	}
-	// The next, healthy response is processed normally.
 	if err := p.IngestPVMBG(ctx, pvmbg(`[`+v1+`]`, c.now())); err != nil {
 		t.Fatal(err)
 	}

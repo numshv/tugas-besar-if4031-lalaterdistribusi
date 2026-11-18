@@ -27,7 +27,7 @@ token() {
   echo "$TOKEN"
 }
 
-send() { # key -> "http_code time_total"
+send() {
   curl -s -o /dev/null -w '%{http_code} %{time_total}' -m 10 -X POST "$GW/field-reports" \
     -H "Authorization: Bearer $(token)" -H "Idempotency-Key: $1" -H 'Content-Type: application/json' \
     -d "{\"hazard_type\":\"VOLCANIC\",\"latitude\":-7.54,\"longitude\":110.44,\"observed_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"description\":\"verifikasi $1\"}" || echo "000 0"

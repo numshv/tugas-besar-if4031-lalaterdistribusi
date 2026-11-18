@@ -37,7 +37,6 @@ func TestRestoredSnapshotContinuesLikeAFullReplay(t *testing.T) {
 		}
 		full.apply(a.Drain())
 
-		// Snapshot at a random point, restore, then go on with the rest.
 		cut := r.Intn(len(f.events))
 		resumed := versionedStore{}
 		b := New(DefaultConfig())

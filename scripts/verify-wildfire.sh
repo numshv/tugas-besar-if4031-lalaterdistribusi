@@ -26,7 +26,7 @@ mkdir -p "$OUT"
 stats() { curl -sf -m 5 -H "Authorization: Bearer $AUDIT" "$GW/internal/wildfire/stats" || echo '{}'; }
 field() { "$PY" -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1], ""))' "$1"; }
 
-wait_caught_up() { # label -> seconds until caught_up and lag 0
+wait_caught_up() {
   local start=$(date +%s) s
   while :; do
     s="$(stats)"

@@ -1,4 +1,3 @@
-// Package jwtauth verifies access tokens issued by auth-service.
 package jwtauth
 
 import (

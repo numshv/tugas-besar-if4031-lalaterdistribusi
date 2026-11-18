@@ -11,10 +11,10 @@ import (
 )
 
 const (
-	CorruptTruncated   = "truncated"    // valid JSON cut in half
-	CorruptDeep        = "deep"         // arrays nested corruptDepth levels deep
-	CorruptInvalidUTF8 = "invalid_utf8" // a string value contains bytes that are not UTF-8
-	CorruptOversize    = "oversize"     // valid JSON padded past corruptOversizeBytes
+	CorruptTruncated   = "truncated"
+	CorruptDeep        = "deep"
+	CorruptInvalidUTF8 = "invalid_utf8"
+	CorruptOversize    = "oversize"
 )
 
 const (
@@ -23,7 +23,6 @@ const (
 	corruptMaxCount      = 1000
 )
 
-// corruption holds the broken bodies still to be served; each response consumes one.
 type corruption struct {
 	mu        sync.Mutex
 	kind      string
@@ -68,7 +67,6 @@ func corruptBody(kind string, payload []map[string]any) []byte {
 			first = payload[0]
 		}
 		b, _ := json.Marshal([]map[string]any{first})
-		// Insert raw 0xff 0xfe bytes at the start of the report_id value.
 		return bytes.Replace(b, []byte(`"report_id":"`), []byte("\"report_id\":\"\xff\xfe"), 1)
 	case CorruptOversize:
 		padded := append([]map[string]any{{"padding": strings.Repeat("x", corruptOversizeBytes)}}, payload...)
@@ -87,7 +85,6 @@ func validCorruptKind(kind string) bool {
 	return false
 }
 
-// setCorrupt schedules the next count responses of GET /volcanic-reports to be broken.
 // count 0 cancels whatever is still pending.
 func (h *handler) setCorrupt(w http.ResponseWriter, r *http.Request) {
 	if !h.adminAuthorized(w, r) {

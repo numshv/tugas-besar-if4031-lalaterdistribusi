@@ -1,5 +1,3 @@
-// Package fieldreports stores Tim Lapangan reports read from Kafka.
-//
 // Delivery is at-least-once (the offset is committed only after the report is
 // stored) and storing is idempotent (report_id is the document id and is only
 // written on insert), so every accepted report is processed exactly once in

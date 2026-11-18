@@ -1,6 +1,3 @@
-// Package processor drives the wildfire engine from the live feed and sends
-// what changed to the aggregator through Kafka.
-
 package processor
 
 import (
@@ -384,7 +381,6 @@ func (p *Processor) updateGauges() {
 	malformed.Set(float64(s.Malformed))
 }
 
-// Status is what /internal/wildfire/stats shows.
 type Status struct {
 	fire.Summary
 	CaughtUp       bool    `json:"caught_up"`

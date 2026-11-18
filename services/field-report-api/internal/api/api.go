@@ -21,7 +21,6 @@ type Producer interface {
 	Produce(ctx context.Context, r fieldreport.Report) error
 }
 
-// StatusLookup asks the aggregator whether a report has been stored.
 type StatusLookup interface {
 	Lookup(ctx context.Context, reportID string) (map[string]any, bool, error)
 }

@@ -200,7 +200,6 @@ func TestRestartedProcessorConvergesToTheSameFires(t *testing.T) {
 	want := expected(events)
 	s := &store{docs: map[string]hazard.UpsertMessage{}, dead: map[string]bool{}, r: rand.New(rand.NewSource(5))}
 
-	// First instance is killed halfway.
 	half := &fakeFeed{events: events[:300], chunk: 23, r: rand.New(rand.NewSource(6))}
 	ctx, cancel := context.WithCancel(context.Background())
 	p1 := newProcessor(half, s)
