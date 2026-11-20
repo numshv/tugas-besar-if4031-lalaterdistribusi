@@ -38,6 +38,7 @@ type Response struct {
 type Failure struct {
 	Reason    string
 	Retryable bool
+	stale     bool // rejected by the fence: not bad data, so never set aside
 }
 
 func (f *Failure) Error() string { return f.Reason }
@@ -181,7 +182,10 @@ func (p *Pipeline) processBMKG(ctx context.Context, rec []byte, receivedAt time.
 }
 
 func (p *Pipeline) persist(ctx context.Context, ev hazard.Event) *Failure {
-	stored, applied, err := p.Store.Upsert(ctx, ev)
+	stored, applied, err := p.write(ctx, ev)
+	if errors.Is(err, store.ErrStaleEpoch) {
+		return &Failure{Reason: err.Error(), stale: true}
+	}
 	if err != nil {
 		return &Failure{Reason: "store_unavailable: " + err.Error(), Retryable: true}
 	}
@@ -220,6 +224,9 @@ func (p *Pipeline) newMessage(source hazard.Source, kind dlq.Kind, payload []byt
 func (p *Pipeline) setAsideRecord(ctx context.Context, source hazard.Source, payload []byte, ref string, receivedAt time.Time, f *Failure) error {
 	if f == nil {
 		return nil
+	}
+	if f.stale {
+		return fmt.Errorf("%w: %s", store.ErrStaleEpoch, f.Reason)
 	}
 	m := p.newMessage(source, dlq.KindRecord, payload, receivedAt, f)
 	m.RefHint = ref

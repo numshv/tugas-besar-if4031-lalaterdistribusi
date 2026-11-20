@@ -16,11 +16,16 @@ import (
 func Middleware(log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/metrics" {
+				metricsHandler.ServeHTTP(w, r)
+				return
+			}
 			id := correlation.FromHeader(r.Header.Get(correlation.Header))
-			ctx := correlation.WithID(r.Context(), id)
+			ctx, span := startServerSpan(correlation.WithID(r.Context(), id), r)
 			w.Header().Set(correlation.Header, id)
 
 			rec := &recorder{ResponseWriter: w, status: http.StatusOK}
+			req := r.WithContext(ctx)
 			start := time.Now()
 
 			defer func() {
@@ -31,6 +36,7 @@ func Middleware(log *slog.Logger) func(http.Handler) http.Handler {
 						Error(rec, http.StatusInternalServerError, "internal_error", "internal server error")
 					}
 				}
+				endServerSpan(span, req, rec.status, start)
 				log.InfoContext(ctx, "request handled",
 					"method", r.Method,
 					"path", r.URL.Path,
@@ -38,7 +44,7 @@ func Middleware(log *slog.Logger) func(http.Handler) http.Handler {
 					"duration_ms", msSince(start))
 			}()
 
-			next.ServeHTTP(rec, r.WithContext(ctx))
+			next.ServeHTTP(rec, req)
 		})
 	}
 }

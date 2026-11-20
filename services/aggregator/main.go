@@ -135,7 +135,7 @@ func run(log *slog.Logger) error {
 	p := poller.New(log, cfg.PollInterval, httpTimeout, bmkgClient, pvmbgClient,
 		pipe.IngestBMKG, pipe.IngestPVMBG)
 
-	go p.Run(ctx)
+	go runPollers(ctx, log, p, mongoStore)
 	go pipe.RunRetrier(ctx, 2*time.Second)
 
 	fieldStore := fieldreports.NewMongoStore(mongoClient, cfg.MongoDB)

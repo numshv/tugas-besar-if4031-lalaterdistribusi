@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jaeger
+  template:
+    metadata:
+      labels:
+        app: jaeger
+        role: other
+    spec:
+      nodeSelector:
+        bnpb/slot: a
+      containers:
+        - name: jaeger
+          image: jaegertracing/all-in-one:1.63.0
+          env:
+            - name: COLLECTOR_OTLP_ENABLED
+              value: "true"
+            - name: QUERY_BASE_PATH
+              value: /jaeger
+            - name: MEMORY_MAX_TRACES
+              value: "2000"
+            - name: GOMEMLIMIT
+              value: 200MiB
+          ports:
+            - containerPort: 16686
+            - containerPort: 4318
+          resources:
+            requests:
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 14269
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger
+spec:
+  selector:
+    app: jaeger
+  ports:
+    - name: ui
+      port: 16686
+      targetPort: 16686
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318

@@ -2,3 +2,51 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../base
+components:
+  - ../../components/hpa
+patches:
+  - target:
+      kind: Deployment
+      name: auth-service
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          bnpb/slot: a
+images:
+  - name: bnpb/aggregator
+    newName: ghcr.io/numshv/tugas-besar-if4031-lalaterdistribusi/aggregator
+    newTag: latest
+  - name: bnpb/auth-service
+    newName: ghcr.io/numshv/tugas-besar-if4031-lalaterdistribusi/auth-service
+    newTag: latest
+  - name: bnpb/bmkg-mock
+    newName: ghcr.io/numshv/tugas-besar-if4031-lalaterdistribusi/bmkg-mock
+    newTag: latest
+  - name: bnpb/client-api
+    newName: ghcr.io/numshv/tugas-besar-if4031-lalaterdistribusi/client-api
+    newTag: latest
+  - name: bnpb/coastal-ingester
+    newName: ghcr.io/numshv/tugas-besar-if4031-lalaterdistribusi/coastal-ingester
+    newTag: latest
+  - name: bnpb/consumer-dashboard
+    newName: ghcr.io/numshv/tugas-besar-if4031-lalaterdistribusi/consumer-dashboard
+    newTag: latest
+  - name: bnpb/consumer-notifier
+    newName: ghcr.io/numshv/tugas-besar-if4031-lalaterdistribusi/consumer-notifier
+    newTag: latest
+  - name: bnpb/consumer-regional
+    newName: ghcr.io/numshv/tugas-besar-if4031-lalaterdistribusi/consumer-regional
+    newTag: latest
+  - name: bnpb/field-receiver
+    newName: ghcr.io/numshv/tugas-besar-if4031-lalaterdistribusi/field-receiver
+    newTag: latest
+  - name: bnpb/field-report-api
+    newName: ghcr.io/numshv/tugas-besar-if4031-lalaterdistribusi/field-report-api
+    newTag: latest
+  - name: bnpb/pvmbg-mock
+    newName: ghcr.io/numshv/tugas-besar-if4031-lalaterdistribusi/pvmbg-mock
+    newTag: latest
+  - name: bnpb/wildfire-processor
+    newName: ghcr.io/numshv/tugas-besar-if4031-lalaterdistribusi/wildfire-processor
+    newTag: latest

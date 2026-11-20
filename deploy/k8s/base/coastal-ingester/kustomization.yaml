@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac.yaml
+  - deployment.yaml
+  - service.yaml
+configMapGenerator:
+  - name: coastal-ingester-config
+    literals:
+      - PORT=8088
+      - SENSOR_BASE_URL=http://sensor-pantai:8080
+      - SENSOR_POLL_INTERVAL_MS=1000
+      - SENSOR_PAGE_LIMIT=200
+      - SENSOR_REQUEST_TIMEOUT_MS=2000
+      - SENSOR_MAX_RETRIES=2
+      - SENSOR_BREAKER_FAILURES=5
+      - SENSOR_BREAKER_OPEN_MS=10000
+      - SENSOR_MAX_CONCURRENCY=2
+      - SENSOR_STUCK_AFTER_MS=15000
+      - SENSOR_STALE_AFTER_SECONDS=900
+      - KAFKA_CRITICAL_TOPIC=bnpb.critical-alerts.v1
+      - KAFKA_UPSERTS_TOPIC=bnpb.hazard-upserts.v1
+      - KAFKA_REJECTED_TOPIC=bnpb.sensor-rejected.v1

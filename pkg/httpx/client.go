@@ -33,13 +33,19 @@ func NewClient(upstream string, timeout time.Duration, log *slog.Logger) *Client
 }
 
 func (c *Client) Do(ctx context.Context, req *http.Request) (*http.Response, error) {
-	req = req.WithContext(ctx)
 	if id := correlation.FromContext(ctx); id != "" {
 		req.Header.Set(correlation.Header, id)
 	}
+	ctx, span := startClientSpan(ctx, c.upstream, req)
+	req = req.WithContext(ctx)
 
 	start := time.Now()
 	resp, err := c.http.Do(req)
+	status := 0
+	if resp != nil {
+		status = resp.StatusCode
+	}
+	endClientSpan(span, c.upstream, start, status, err)
 	attrs := []any{
 		"upstream", c.upstream,
 		"method", req.Method,

@@ -23,3 +23,24 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: aggregator-pod-reader
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aggregator-leases
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aggregator-leases
+subjects:
+  - kind: ServiceAccount
+    name: aggregator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aggregator-leases

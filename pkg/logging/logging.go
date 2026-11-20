@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"os"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/correlation"
 )
 
@@ -20,6 +22,9 @@ type contextHandler struct {
 func (h *contextHandler) Handle(ctx context.Context, r slog.Record) error {
 	if id := correlation.FromContext(ctx); id != "" {
 		r.AddAttrs(slog.String("correlation_id", id))
+	}
+	if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
+		r.AddAttrs(slog.String("trace_id", sc.TraceID().String()))
 	}
 	return h.Handler.Handle(ctx, r)
 }
