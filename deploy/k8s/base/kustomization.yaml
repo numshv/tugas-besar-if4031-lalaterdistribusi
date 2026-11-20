@@ -9,6 +9,10 @@ resources:
   - ingress.yaml
   - mongodb
   - kafka
+  - observability
+  - sensor-pantai
+  - coastal-ingester
+  - field-receiver
   - aggregator
   - bmkg-mock
   - pvmbg-mock
@@ -29,3 +33,17 @@ configMapGenerator:
       - MONGO_DB=bnpb
       - JWT_ISSUER=bnpb-auth
       - JWT_AUDIENCE=client-api
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+patches:
+  - target:
+      kind: Deployment
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: any
+      spec:
+        template:
+          metadata:
+            annotations:
+              prometheus.io/scrape: "true"

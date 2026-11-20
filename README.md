@@ -136,6 +136,93 @@ they are started with `env -u MSYS_NO_PATHCONV` below. Port 8080 is often
 reserved by Windows (`netsh interface ipv4 show excludedportrange protocol=tcp`); if it
 is, change `CLIENT_API_HOST_PORT` in `.env`.
 
+### Kubernetes (Milestone 2)
+
+Everything runs in the namespace `sistem-informasi-kebencanaan-bnpb`. Manifests are plain
+Kustomize: `deploy/k8s/base/<service>/` per service, `overlays/dev` (k3d, local images) and
+`overlays/demo` (VM cluster, images from GHCR, HPA on).
+
+**Topology declaration** (fill in before the demo):
+
+| Node | Role | Mongo slot | VM or native | Physical host | Host CPU / RAM |
+|---|---|---|---|---|---|
+| node-a | control plane + worker (never shut down by scenarios) | a | VM | _laptop_ | _cpu / ram_ |
+| node-b | worker | b | VM | _laptop_ | _cpu / ram_ |
+| node-c | worker | c | VM | _laptop_ | _cpu / ram_ |
+| node-d | worker | d | VM | _laptop_ | _cpu / ram_ |
+
+Scenarios that shut a node down target node-b, node-c or node-d only.
+
+**Cluster.** Demo nodes are VMs with their own kernel (k3d shares the host kernel and is for
+development only).
+
+```bash
+# node-a
+sudo NODE_NAME=node-a bash infra/k3s/install-server.sh          # prints the join token
+# node-b, node-c, node-d
+sudo NODE_NAME=node-b SERVER_IP=<node-a ip> TOKEN=<token> bash infra/k3s/install-agent.sh
+# nodes on different laptops over Tailscale: add NODE_IP=<tailscale ip> FLANNEL_IFACE=tailscale0
+```
+
+With VirtualBox, turn off host time sync so clock-skew scenarios are not undone:
+`VBoxManage setextradata <vm> "VBoxInternal/Devices/VMMDev/0/Config/GetHostTimeDisabled" 1`.
+
+Development cluster: `k3d cluster create bnpb --agents 3 -p "8090:80@loadbalancer"`.
+
+**Deploy (one command).** `scripts/deploy.sh dev` builds the images and loads them into k3d;
+`scripts/deploy.sh demo` pulls them from GHCR (built by `.github/workflows/images.yml` on every
+push to `dev` and `main`; the packages must be public, or add an `imagePullSecret`). Both create
+the Secrets from `.env`, label the Mongo slots from `MONGO_SLOT_NODES`, apply the overlay and
+prune objects that were removed from the manifests. Then install the Tester Agent:
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/susTuna/if4031-tester-agent/ebb55261711123a9a211739ffbf140a275caa6da/manifest.yaml
+kubectl exec -n tester-agent daemonset/tester-agent -- /app list
+```
+
+**Entry point.** Traefik on port 80 of any node (k3d: `http://localhost:8090`):
+
+| Path | Service |
+|---|---|
+| `/login`, `/refresh`, `/.well-known/` | auth-service |
+| `/hazards` (and every other path) | client-api |
+| `/field-reports` | field-report-api |
+| `/internal/audit/`, `/internal/ops/`, `/analytics` | aggregator |
+| `/internal/wildfire/` | wildfire-processor |
+| `/grafana/` (dashboards "BNPB Overview" and "BNPB Reliability (P2 & P5)"), `/jaeger/`, `/prometheus/` | observability |
+
+**Configuration added in Milestone 2** (`.env` unless noted):
+
+| Variable | Where | Meaning |
+|---|---|---|
+| `MONGO_SLOT_NODES` | `.env` | Node for Mongo slots a b c d, in that order |
+| `PANTAI_AUTH_TOKEN` | `.env` → Secret `pantai-token` | Shared token of Sensor Pantai and coastal-ingester |
+| `AUDIT_TOKENS`, `SATELLITE_TOKEN`, `GRAFANA_ADMIN_PASSWORD` | `.env` (optional) | Audit API tokens, Feed Satelit token, Grafana admin password |
+| `LEASE_DURATION_SECONDS` / `LEASE_RENEW_DEADLINE_SECONDS` / `LEASE_RETRY_PERIOD_SECONDS` | aggregator env | Leader lease timing (15 / 10 / 2) |
+| `SENSOR_REQUEST_TIMEOUT_MS`, `SENSOR_MAX_RETRIES`, `SENSOR_BREAKER_FAILURES`, `SENSOR_BREAKER_OPEN_MS`, `SENSOR_MAX_CONCURRENCY` | `deploy/k8s/base/coastal-ingester` | Timeout 2000, 2 retries with jitter, breaker opens after 5 failures for 10 s, bulkhead 2 |
+| `SENSOR_STUCK_AFTER_MS`, `SENSOR_STALE_AFTER_SECONDS` | same | Sensor data counts as stale when `generated_at` stops for 15 s, or a caught-up page is more than 900 s (sensor time) behind |
+| `CLIENT_API_MEDIA_MAX_CONCURRENCY`, `COASTAL_STALE_AFTER_SECONDS` | `deploy/k8s/base/client-api` | Media may hold 40 concurrent requests; coastal readings older than 30 s are returned with `stale: true` |
+
+**Triggering the P2 and P5 scenarios.**
+
+```bash
+NS=sistem-informasi-kebencanaan-bnpb
+kubectl -n $NS get leases                                   # who polls BMKG, PVMBG and Sensor Pantai, and the epoch
+kubectl -n $NS delete pod <holder of poller-bmkg>           # P2.3 failover: a new holder within ~20 s, epoch + 1
+# P2.5 freeze: on the VM host, VBoxManage controlvm <vm> pause; wait 30 s; VBoxManage controlvm <vm> resume
+#   the woken pod logs "lease no longer ours" and sends nothing; Grafana shows the epoch change
+# P2.4 clock skew and node kills: Tester Agent, e.g. kubectl exec -n tester-agent daemonset/tester-agent -- /app run practice <name>
+k6 run loadtest/m2/p2-sustained.js & loadtest/m2/p2-chaos.sh   # P2.6 + P2.8 (10,000 VUs, scale 3-5-2, rollout)
+k6 run -e VUS=400 loadtest/m2/p2-throughput.js              # P2.7, once with 1 and once with 3 aggregator replicas
+kubectl -n $NS scale deploy/sensor-pantai --replicas=0      # P5.4: breaker opens, client-api answers stale at once
+kubectl -n $NS scale deploy/sensor-pantai --replicas=1      #        recovers without intervention
+k6 run loadtest/m2/p5-shedding.js                           # P5.5: Media gets 429, Tim Lapangan stays at 200
+kubectl -n $NS exec deploy/field-receiver -- wget -qO- http://127.0.0.1:8089/alerts   # P5.1 alerts and latency
+```
+
+k6 needs the client credentials as `-e MEDIA_ID=.. -e MEDIA_SECRET=..` (and `FIELD_`, `INTERNAL_`)
+plus `-e BASE_URL=http://<node>`; run it from a machine outside the cluster.
+
 ### MongoDB sharded cluster (Kubernetes)
 
 HazardEvents live in a MongoDB sharded cluster: 4 shards × 3 copies spread over 4 node

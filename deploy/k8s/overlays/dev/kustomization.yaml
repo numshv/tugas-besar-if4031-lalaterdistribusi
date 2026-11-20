@@ -3,6 +3,10 @@ kind: Kustomization
 resources:
   - ../../base
 images:
+  - name: bnpb/coastal-ingester
+    newTag: dev
+  - name: bnpb/field-receiver
+    newTag: dev
   - name: bnpb/aggregator
     newTag: dev
   - name: bnpb/bmkg-mock
