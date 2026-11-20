@@ -4,7 +4,8 @@ metadata:
   name: kafka
 spec:
   serviceName: kafka
-  replicas: 1
+  replicas: 3
+  podManagementPolicy: Parallel
   selector:
     matchLabels:
       app: kafka
@@ -14,9 +15,17 @@ spec:
         app: kafka
         role: broker
     spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: kafka
+              topologyKey: kubernetes.io/hostname
       containers:
         - name: kafka
           image: apache/kafka:3.9.0
+          args: ["sh", "-c", "export KAFKA_NODE_ID=$$(( $${HOSTNAME##*-} + 1 )) && exec /etc/kafka/docker/run"]
           ports:
             - containerPort: 9092
             - containerPort: 9093
