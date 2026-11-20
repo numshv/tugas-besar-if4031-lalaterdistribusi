@@ -44,6 +44,8 @@ spec:
             - configMapRef:
                 name: wildfire-processor-config
           env:
+            - name: GOMEMLIMIT
+              value: 900MiB
             - name: SATELLITE_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -57,9 +59,9 @@ spec:
                   optional: true
           resources:
             requests:
-              memory: 256Mi
-            limits:
               memory: 512Mi
+            limits:
+              memory: 1Gi
           readinessProbe:
             httpGet:
               path: /health
