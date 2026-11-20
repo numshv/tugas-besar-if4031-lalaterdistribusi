@@ -7,7 +7,6 @@ import (
 	"time"
 )
 
-// MemoryStore is an in-process Store for tests.
 type MemoryStore struct {
 	mu   sync.Mutex
 	msgs map[string]Message

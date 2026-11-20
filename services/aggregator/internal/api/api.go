@@ -34,7 +34,7 @@ func New(s store.Store, p *poller.Poller, log *slog.Logger, maxConcurrency int, 
 	if ops != nil {
 		ops.register(root)
 	}
-	root.Handle("/", limitConcurrency(maxConcurrency)(limited))
+	root.Handle("/", httpx.LimitConcurrency(maxConcurrency, "aggregator internal API is at capacity")(limited))
 
 	return root
 }
@@ -106,23 +106,4 @@ func parseSinceOrZero(r *http.Request) time.Time {
 		return time.Time{}
 	}
 	return t.UTC()
-}
-
-func limitConcurrency(max int) func(http.Handler) http.Handler {
-	if max <= 0 {
-		max = 64
-	}
-	sem := make(chan struct{}, max)
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
-				next.ServeHTTP(w, r)
-			default:
-				httpx.Error(w, http.StatusTooManyRequests, "too_many_requests",
-					"aggregator internal API is at capacity")
-			}
-		})
-	}
 }

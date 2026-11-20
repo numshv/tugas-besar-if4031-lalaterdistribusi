@@ -43,7 +43,7 @@ func New(s store.Store, locator store.Locator, members Members, cfg Config, log 
 	if cfg.MaxConcurrent <= 0 {
 		cfg.MaxConcurrent = 4
 	}
-	auth, limit := RequireToken(cfg.Tokens), LimitConcurrency(cfg.MaxConcurrent)
+	auth, limit := RequireToken(cfg.Tokens), httpx.LimitConcurrency(cfg.MaxConcurrent, "audit API sedang penuh, coba lagi")
 	a := &API{
 		store: s, locator: locator, members: members, cfg: cfg, log: log, now: time.Now,
 		mux:  http.NewServeMux(),

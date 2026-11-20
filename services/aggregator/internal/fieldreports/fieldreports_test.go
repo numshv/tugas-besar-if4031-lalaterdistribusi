@@ -64,7 +64,6 @@ func TestRedeliveryIsProcessedOnce(t *testing.T) {
 	if len(st.docs) != 1 || st.deliveries["report-0001"] != 3 {
 		t.Fatalf("docs %d, deliveries %d", len(st.docs), st.deliveries["report-0001"])
 	}
-	// Same key, different content: the first report stays.
 	_ = c.Handle(context.Background(), discard, message(t, "report-0001", "laporan lain"))
 	if len(st.docs) != 1 {
 		t.Fatal("conflicting report stored twice")
@@ -83,8 +82,8 @@ func TestBrokenMessageIsParked(t *testing.T) {
 	c, st, q := newConsumer()
 	bad := []kafka.Message{
 		{Key: []byte("report-0003"), Value: []byte("{not json")},
-		message(t, "report-0004", ""),                                           // invalid: empty description
-		{Key: []byte("other-key"), Value: message(t, "report-0005", "x").Value}, // key mismatch
+		message(t, "report-0004", ""),
+		{Key: []byte("other-key"), Value: message(t, "report-0005", "x").Value},
 	}
 	for _, m := range bad {
 		if err := c.Handle(context.Background(), discard, m); err != nil {

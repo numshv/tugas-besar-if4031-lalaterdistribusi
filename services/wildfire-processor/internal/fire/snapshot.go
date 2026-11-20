@@ -25,9 +25,8 @@ type Snapshot struct {
 	Late         []LateDetection
 	Detections   []SnapshotDetection
 	Emitted      []SnapshotEmitted
-	// Profile is the feed session profile the state belongs to.
-	Profile string
-	TakenAt time.Time
+	Profile      string
+	TakenAt      time.Time
 }
 
 type SnapshotDetection struct {
@@ -78,7 +77,6 @@ func (e *Engine) Snapshot(profile string, now time.Time) (*Snapshot, error) {
 	return s, nil
 }
 
-// Restore rebuilds an engine from a snapshot taken with the same config.
 func Restore(cfg Config, s *Snapshot) (*Engine, error) {
 	if s.Format != SnapshotFormat {
 		return nil, errors.New("snapshot format differs")

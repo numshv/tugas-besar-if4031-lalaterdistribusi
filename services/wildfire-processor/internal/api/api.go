@@ -1,5 +1,3 @@
-// Package api serves the wildfire numbers the spec asks to report: single
-// detections, late detections, lag, and the current fires.
 package api
 
 import (

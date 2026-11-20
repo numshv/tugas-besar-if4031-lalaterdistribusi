@@ -88,17 +88,14 @@ type Detection struct {
 	Version    string      `json:"version"`
 }
 
-// Key returns satellite|acq_date|acq_time|latitude|longitude using the feed's own text.
 func (d Detection) Key() string {
 	return strings.Join([]string{d.Satellite, d.AcqDate, d.AcqTime.String(), d.Latitude.String(), d.Longitude.String()}, "|")
 }
 
-// Time returns the detection time: acq_date plus acq_time (HHMM, unpadded) in UTC.
 func (d Detection) Time() (time.Time, error) {
 	return DetectionTime(d.AcqDate, d.AcqTime.String())
 }
 
-// DetectionTime combines acq_date (YYYY-MM-DD) and acq_time (HHMM, possibly unpadded).
 func DetectionTime(acqDate, acqTime string) (time.Time, error) {
 	day, err := time.Parse("2006-01-02", acqDate)
 	if err != nil {

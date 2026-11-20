@@ -9,13 +9,13 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/segmentio/kafka-go"
 
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/correlation"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/envx"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/fieldreport"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/httpx"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/jwtauth"
@@ -44,7 +44,7 @@ func run(log *slog.Logger) error {
 
 	producer := &kafkaProducer{w: &kafka.Writer{
 		Addr:         kafka.TCP(brokers...),
-		Topic:        kafkax.Env("FIELD_REPORTS_TOPIC", "bnpb.field-reports.v1"),
+		Topic:        envx.String("FIELD_REPORTS_TOPIC", "bnpb.field-reports.v1"),
 		Balancer:     &kafka.Hash{},
 		RequiredAcks: kafka.RequireAll,
 		BatchTimeout: 2 * time.Millisecond,
@@ -55,14 +55,14 @@ func run(log *slog.Logger) error {
 	keys := jwtauth.NewBackgroundKeyProvider(ctx, os.Getenv("AUTH_JWKS_URL"), log, time.Minute)
 	h := &api.Handler{
 		Producer:       producer,
-		Status:         aggregatorStatus{base: kafkax.Env("AGGREGATOR_BASE_URL", "http://aggregator:8083"), http: httpx.NewClient("aggregator", 3*time.Second, log)},
+		Status:         aggregatorStatus{base: envx.String("AGGREGATOR_BASE_URL", "http://aggregator:8083"), http: httpx.NewClient("aggregator", 3*time.Second, log)},
 		Verifier:       &jwtauth.Verifier{Keys: keys, Issuer: os.Getenv("JWT_ISSUER"), Audience: os.Getenv("JWT_AUDIENCE")},
 		Log:            log,
-		ProduceTimeout: time.Duration(envInt("PRODUCE_TIMEOUT_MS", 3000)) * time.Millisecond,
+		ProduceTimeout: time.Duration(envx.Int("PRODUCE_TIMEOUT_MS", 3000)) * time.Millisecond,
 		Now:            time.Now,
 	}
 
-	port := kafkax.Env("FIELD_REPORT_API_PORT", "8085")
+	port := envx.String("FIELD_REPORT_API_PORT", "8085")
 	return httpx.ListenAndServe(ctx, ":"+port, httpx.Middleware(log)(h.Routes()), log)
 }
 
@@ -95,11 +95,4 @@ func (a aggregatorStatus) Lookup(ctx context.Context, id string) (map[string]any
 		return nil, false, fmt.Errorf("lookup field report: %w", err)
 	}
 	return doc, true, nil
-}
-
-func envInt(key string, def int) int {
-	if n, err := strconv.Atoi(os.Getenv(key)); err == nil {
-		return n
-	}
-	return def
 }

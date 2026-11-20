@@ -98,23 +98,38 @@ func (m *MongoUnits) Stats(ctx context.Context, u Unit) (UnitStats, error) {
 	dataBytes := int64(db.DataSize)
 	stats.DataBytes = &dataBytes
 
-	cur, err := c.Database(m.dbName).Collection("hazard_events").Aggregate(ctx,
-		mongo.Pipeline{{{Key: "$collStats", Value: bson.D{{Key: "count", Value: bson.D{}}}}}})
+	stats.Docs = map[string]int64{}
+	for _, name := range DocCollections {
+		docs, err := collectionCount(ctx, c.Database(m.dbName).Collection(name))
+		if err != nil {
+			if name == "hazard_events" {
+				return UnitStats{}, fmt.Errorf("collStats %s %s: %w", u.Name, name, err)
+			}
+			continue
+		}
+		stats.Docs[name] = docs
+	}
+	return stats, nil
+}
+
+var DocCollections = []string{"hazard_events", "exp_by_area", "exp_by_ingested"}
+
+func collectionCount(ctx context.Context, col *mongo.Collection) (int64, error) {
+	cur, err := col.Aggregate(ctx, mongo.Pipeline{{{Key: "$collStats", Value: bson.D{{Key: "count", Value: bson.D{}}}}}})
 	if err != nil {
-		return UnitStats{}, fmt.Errorf("collStats %s: %w", u.Name, err)
+		return 0, err
 	}
 	var rows []struct {
 		Count int64 `bson:"count"`
 	}
 	if err := cur.All(ctx, &rows); err != nil {
-		return UnitStats{}, fmt.Errorf("collStats %s: %w", u.Name, err)
+		return 0, err
 	}
 	var docs int64
 	for _, r := range rows {
 		docs += r.Count
 	}
-	stats.Docs = &docs
-	return stats, nil
+	return docs, nil
 }
 
 func (m *MongoUnits) Close(ctx context.Context) {

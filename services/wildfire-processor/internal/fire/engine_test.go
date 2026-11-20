@@ -191,8 +191,6 @@ func TestFireBecomesFinalWhenWatermarkPassesIt(t *testing.T) {
 	}
 }
 
-// --- randomized: crash recovery and the brute-force reference ---
-
 func randomFeed(seed int64, n int) *feed {
 	r := rand.New(rand.NewSource(seed))
 	type pending struct {

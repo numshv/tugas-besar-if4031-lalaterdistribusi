@@ -1,7 +1,3 @@
-// Package fire turns the Feed Satelit stream into wildfire HazardEvents.
-//
-// The engine is a pure function of the feed prefix it has applied: the same
-
 package fire
 
 import (
@@ -385,7 +381,6 @@ func (e *Engine) dropComp(c *component) {
 	delete(e.open, c)
 }
 
-// addActive merges every neighbouring component and d into one.
 func (e *Engine) addActive(d *detection) {
 	var targets []*component
 	seen := map[*component]bool{}
@@ -541,8 +536,6 @@ func (e *Engine) queue(m hazard.UpsertMessage) {
 	e.pending[m.SourceRefID] = Emit{Message: m, ArrivedAt: arrived}
 }
 
-// Drain hands over the latest message of every fire that changed since the
-// previous Drain, ordered by fire ID.
 func (e *Engine) Drain() []Emit {
 	out := make([]Emit, 0, len(e.pending))
 	for _, m := range e.pending {
@@ -632,7 +625,6 @@ func contentHash(m hazard.UpsertMessage) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Fires returns every current fire, ordered by ID.
 func (e *Engine) Fires() []hazard.UpsertMessage {
 	var out []hazard.UpsertMessage
 	for c := range e.comps {
@@ -645,7 +637,6 @@ func (e *Engine) Fires() []hazard.UpsertMessage {
 	return out
 }
 
-// Digest fingerprints the current fires (content only), to compare two runs.
 func Digest(fires []hazard.UpsertMessage) string {
 	h := sha256.New()
 	for _, f := range fires {

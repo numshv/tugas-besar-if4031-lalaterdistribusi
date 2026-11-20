@@ -279,11 +279,101 @@ never 500.
 `AUDIT_INCLUDE_RETRACTED` (default `false`) decides whether retracted events count in
 `/events` and `/checksum`; both endpoints always follow the same rule.
 
+### Loading the historical earthquake catalog (P1)
+
+The loader ships inside the aggregator image (`/usr/local/bin/loader`) and sends the catalog
+through `hazard-upserts` as `source: BMKG`, keeping each row's id as `source_ref_id` byte for
+byte. It reads CSV, JSON or JSON Lines, recognises common column names (`id`, `time`,
+`latitude`, `longitude`, `mag`, `depth`, `place`, ...) and accepts `--col-*`, `--time-layout`
+and `--tz` when the file differs. Rows go through the same BMKG mapping as live events; a row
+without a region gets the nearest province. Invalid rows are skipped and listed;
+`--strict` stops at the first one. It must run inside the cluster (Kafka advertises
+`kafka:9092`).
+
+The BMKG mock keeps generating random `BMKG` events, which would change the checksum. Put it
+in quiet mode (no seed, no new events) before a checksum run:
+
+```bash
+NS=sistem-informasi-kebencanaan-bnpb
+kubectl -n $NS set env deploy/bmkg-mock BMKG_EVENT_INTERVAL_SECONDS=0
+
+# 1. expected count and checksum of the file, nothing is sent (compare with the assistant's)
+kubectl -n $NS run loader-check --rm -i --restart=Never --image=bnpb/aggregator:dev \
+  --command -- loader --mode=load --file=- --dry-run < katalog.csv
+
+# 2. load it (or edit --url in deploy/k8s/jobs/loader.yaml and kubectl apply it)
+kubectl -n $NS run loader --rm -i --restart=Never --image=bnpb/aggregator:dev \
+  --env KAFKA_BROKERS=kafka:9092 --command -- loader --mode=load --file=- --rate=500 < katalog.csv
+
+# 3. simulate a burst in one region, then remove it again (ids sim-spike-<run>-NNNNNN)
+kubectl -n $NS run spike --rm -i --restart=Never --image=bnpb/aggregator:dev --env KAFKA_BROKERS=kafka:9092 \
+  --command -- loader --mode=spike --run=s1 --count=5000 --rate=200 --region="Selatan Jawa Barat" --lat=-8.1 --lon=107.6
+kubectl -n $NS run cleanup --rm -i --restart=Never --image=bnpb/aggregator:dev --env KAFKA_BROKERS=kafka:9092 \
+  --command -- loader --mode=cleanup --run=s1 --count=5000
+
+# 4. the Audit checksum must now equal step 1
+curl -s -H "Authorization: Bearer $AUDIT" "http://<aggregator>/internal/audit/checksum?source=BMKG"
+```
+
+`purge` (used by cleanup) is only accepted for `source_ref_id` values starting with `sim-`;
+anything else is parked, so real data cannot be deleted this way. Before the real catalog
+arrives, `loader --mode=generate --count=20000 --seed=7 --out=sample.csv` writes a synthetic
+catalog with a realistic skew (about 70% along the Sumatra–Java subduction, 20%
+Sulawesi–Maluku, 10% elsewhere) to rehearse the whole flow.
+
+**Shard-key experiments.** With `STORE_EXPERIMENTS=on` on the aggregator, every write is also
+copied into `exp_by_area` (shard key `{area_name: 1}`) and `exp_by_ingested`
+(`{ingested_at: 1}`), both with a 1 MB chunk size so the balancer really splits them. Load the
+same data, then compare all three collections per shard and per node:
+
+```bash
+scripts/p1-distribution.sh   # docs per shard, per node, and max/avg skew for each collection
+```
+
+`store_docs{collection=...}` shows the same split in Grafana. Turn the flag off and drop the
+experiment collections after the session (`db.exp_by_area.drop(); db.exp_by_ingested.drop()`;
+the next `mongo-init` run recreates them empty).
+
 ```bash
 AUDIT=change-me-audit
 curl -s -H "Authorization: Bearer $AUDIT" "http://localhost:8083/internal/audit/checksum?source=BMKG"
 curl -s -H "Authorization: Bearer $AUDIT" "http://localhost:8083/internal/audit/events?limit=5"
 curl -s -H "Authorization: Bearer $AUDIT" "http://localhost:8083/internal/audit/location?hazard_id=<id>"
+```
+
+### Analytics dashboard (P1)
+
+Open `http://<ingress>/analytics` in a browser and sign in as `analytics-viewer`
+(`CLIENT_ANALYTICS_ID` / `CLIENT_ANALYTICS_SECRET`; BNPB Internal Ops also works). The
+`analytics` scope is read-only: it can load the dashboard data but is refused by client-api
+and by the ops endpoints. The page keeps the token in memory only and refreshes it before it
+expires; leaving the page or a failed refresh asks for the password again. Without
+`CLIENT_ANALYTICS_SECRET` the auth-service simply has no analytics client.
+
+It shows every HazardEvent in the chosen range (24 h, 7 d, 30 d, 1 y, all, or a custom UTC
+range), counted by occurrence time:
+
+- a line chart per hazard kind: Gempa, Tsunami, Gunung api, Kebakaran hutan, Pesisir.
+  `hazard_type` has four values; Tsunami is the `SEISMIC` events whose
+  `attributes.potential_tsunami` is `true`, and Gempa the other `SEISMIC` events, so the five
+  kinds never overlap and add up to the total;
+- counts per severity, and a sortable, searchable table per `area_name`;
+- a table of the five totals next to the chart, so no number depends on color alone.
+
+`GET /analytics/data?range=30d&bucket=day` (or `from`/`to`) returns the same numbers as JSON.
+The aggregator computes them with one `$group` through mongos and caches each range for 5
+seconds. When a shard cannot be reached, that aggregate fails, so it falls back to a
+`find` with `allowPartialResults` through mongos, counts in Go and answers
+`partial: true`; the page then shows a red banner and marks every number with `≥`. A dead
+unit with the data still served by its replicas shows a yellow banner and exact numbers.
+Retracted events follow `AUDIT_INCLUDE_RETRACTED`, the same rule as the Audit API.
+
+To prove the numbers equal a direct count from the Audit API, recount every page of
+`/internal/audit/events` and compare category, severity, area and bucket totals:
+
+```bash
+CLIENT_ANALYTICS_SECRET=... AUDIT_TOKENS=... \
+  go run ./services/aggregator/cmd/verify-analytics --base=http://<ingress> --bucket=week
 ```
 
 ## Test Scenarios

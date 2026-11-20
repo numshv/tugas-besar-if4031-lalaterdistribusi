@@ -158,7 +158,7 @@ func (iss *Issuer) JWKS() map[string]any {
 
 func validScope(scope string) bool {
 	switch scope {
-	case "media", "field", "internal":
+	case "media", "field", "internal", "analytics":
 		return true
 	default:
 		return false

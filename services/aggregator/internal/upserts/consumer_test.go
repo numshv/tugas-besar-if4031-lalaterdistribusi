@@ -247,3 +247,32 @@ func TestRunDoesNotCommitWhenStoppedMidRetry(t *testing.T) {
 		t.Fatalf("offset committed although the event was never stored: %v", reader.committed)
 	}
 }
+
+func TestPurgeDeletesSyntheticAndParksRealIDs(t *testing.T) {
+	st := store.NewMemory()
+	c, pub, dlq := newConsumer(st)
+	ctx := context.Background()
+	sim := hazard.UpsertMessage{Op: hazard.OpUpsert, Source: hazard.SourceBMKG, SourceRefID: "sim-spike-s1-000000", Version: 1,
+		HazardType: hazard.TypeSeismic, Severity: hazard.SeverityNormal, OccurredAt: time.Now().UTC()}
+	if err := c.Handle(ctx, kmsg(t, sim)); err != nil {
+		t.Fatal(err)
+	}
+	purge := hazard.UpsertMessage{Op: hazard.OpPurge, Source: hazard.SourceBMKG, SourceRefID: sim.SourceRefID, Version: 1}
+	if err := c.Handle(ctx, kmsg(t, purge)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Get(ctx, hazard.NewID(hazard.SourceBMKG, sim.SourceRefID)); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("synthetic event must be gone, err = %v", err)
+	}
+	if len(pub.published) != 1 {
+		t.Fatalf("purge must not publish, published = %d", len(pub.published))
+	}
+
+	real := []byte(`{"op":"purge","source":"BMKG","source_ref_id":"EQ-1","version":1}`)
+	if err := c.Handle(ctx, kafka.Message{Value: real}); err != nil {
+		t.Fatal(err)
+	}
+	if len(dlq.reasons) != 1 || dlq.reasons[0] != "purge_not_allowed" {
+		t.Fatalf("purge of a real id must be parked, reasons = %v", dlq.reasons)
+	}
+}
