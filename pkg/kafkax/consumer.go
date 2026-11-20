@@ -17,6 +17,7 @@ type Handler func(ctx context.Context, log *slog.Logger, msg kafka.Message) erro
 const maxAttempts = 5
 
 func Run(ctx context.Context, log *slog.Logger, brokers []string, topic, groupID string, h Handler) {
+	h = observed(topic, groupID, h)
 	r := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:     brokers,
 		Topic:       topic,
@@ -69,6 +70,7 @@ func Run(ctx context.Context, log *slog.Logger, brokers []string, topic, groupID
 // with backoff until it succeeds; its offset is committed only after success.
 // The partition waits meanwhile. Use it where losing a message is not allowed.
 func RunNoDrop(ctx context.Context, log *slog.Logger, brokers []string, topic, groupID string, h Handler) {
+	h = observed(topic, groupID, h)
 	r := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:     brokers,
 		Topic:       topic,
