@@ -32,7 +32,10 @@ func (m *Memory) Analytics(_ context.Context, q analytics.Query, includeRetracte
 	return r, nil
 }
 
-const analyticsTimeout = 10 * time.Second
+const (
+	analyticsAggregateTimeout = 6 * time.Second
+	analyticsScanTimeout      = 5 * time.Second
+)
 
 func analyticsMatch(q analytics.Query, includeRetracted bool) bson.M {
 	match := bson.M{}
@@ -82,12 +85,13 @@ type facetResult struct {
 
 func (s *MongoStore) Analytics(ctx context.Context, q analytics.Query, includeRetracted bool) (analytics.Result, error) {
 	defer observe("analytics", time.Now())
-	ctx, cancel := context.WithTimeout(ctx, analyticsTimeout)
-	defer cancel()
-
-	r, err := s.analyticsAggregate(ctx, q, includeRetracted)
+	aggCtx, cancelAgg := context.WithTimeout(ctx, analyticsAggregateTimeout)
+	r, err := s.analyticsAggregate(aggCtx, q, includeRetracted)
+	cancelAgg()
 	if err != nil {
-		r, err = s.analyticsScan(ctx, q, includeRetracted)
+		scanCtx, cancelScan := context.WithTimeout(ctx, analyticsScanTimeout)
+		r, err = s.analyticsScan(scanCtx, q, includeRetracted)
+		cancelScan()
 		if err != nil {
 			return analytics.Result{}, fmt.Errorf("analytics: %w", err)
 		}
@@ -119,7 +123,7 @@ func (s *MongoStore) analyticsAggregate(ctx context.Context, q analytics.Query, 
 		cur, err := s.col.Aggregate(ctx, mongo.Pipeline{
 			{{Key: "$match", Value: match}},
 			{{Key: "$group", Value: bson.M{"_id": nil, "first": bson.M{"$min": "$occurred_at"}, "last": bson.M{"$max": "$occurred_at"}}}},
-		}, options.Aggregate().SetMaxTime(analyticsTimeout))
+		}, options.Aggregate().SetMaxTime(analyticsAggregateTimeout))
 		if err != nil {
 			return analytics.Result{}, err
 		}
@@ -149,7 +153,7 @@ func (s *MongoStore) analyticsAggregate(ctx context.Context, q analytics.Query, 
 			"stats":    bson.A{bson.M{"$group": bson.M{"_id": nil, "n": bson.M{"$sum": 1}, "first": bson.M{"$min": "$occurred_at"}, "last": bson.M{"$max": "$occurred_at"}}}},
 		}}},
 	}
-	cur, err := s.col.Aggregate(ctx, pipeline, options.Aggregate().SetMaxTime(analyticsTimeout).SetAllowDiskUse(true))
+	cur, err := s.col.Aggregate(ctx, pipeline, options.Aggregate().SetMaxTime(analyticsAggregateTimeout).SetAllowDiskUse(true))
 	if err != nil {
 		return analytics.Result{}, err
 	}
@@ -197,7 +201,7 @@ func (s *MongoStore) analyticsScan(ctx context.Context, q analytics.Query, inclu
 		SetProjection(bson.M{"_id": 0, "hazard_type": 1, "severity": 1, "area_name": 1, "occurred_at": 1, "attributes.potential_tsunami": 1}).
 		SetAllowPartialResults(true).
 		SetBatchSize(5000).
-		SetMaxTime(analyticsTimeout))
+		SetMaxTime(analyticsScanTimeout))
 	if err != nil {
 		return analytics.Result{}, err
 	}
