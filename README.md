@@ -189,7 +189,7 @@ kubectl exec -n tester-agent daemonset/tester-agent -- /app list
 | `/field-reports` | field-report-api |
 | `/internal/audit/`, `/internal/ops/`, `/analytics` | aggregator |
 | `/internal/wildfire/` | wildfire-processor |
-| `/grafana/` (dashboards "BNPB Overview" and "BNPB Reliability (P2 & P5)"), `/jaeger/`, `/prometheus/` | observability |
+| `/grafana/` (dashboards "BNPB Overview", "BNPB Reliability (P2 & P5)" and "BNPB Storage (P1)"), `/jaeger/`, `/prometheus/` | observability |
 
 **Configuration added in Milestone 2** (`.env` unless noted):
 
@@ -293,7 +293,9 @@ Units are named per member (`shard-2-c`, `cfg-a`) so the name survives a failove
 comes from the Kubernetes API (read-only Role `aggregator-pod-reader`). `GET /metrics` on the
 aggregator exposes `store_unit_up`, `store_unit_primary`, `store_docs`, `store_data_bytes`,
 `store_ops_total`, `store_repl_ops_total`, `store_query_duration_seconds` and
-`store_partial_reads_total`, labelled by `unit`, `shard` and `node`. Every aggregator replica
+`store_partial_reads_total`, labelled by `unit`, `shard` and `node`. Here `node` is the node that
+holds the unit, not the node of the aggregator pod; Prometheus keeps it because the `bnpb-pods` job
+sets `honor_labels: true`. Every aggregator replica
 exports the same unit series, so deduplicate with `max by (node, unit)` first. Write skew
 across nodes (1.0 means perfectly even):
 

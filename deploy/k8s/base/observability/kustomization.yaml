@@ -16,3 +16,4 @@ configMapGenerator:
     files:
       - bnpb-overview.json
       - bnpb-reliability.json
+      - bnpb-storage.json
