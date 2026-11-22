@@ -9,7 +9,7 @@ ROOT_PW="$(kubectl -n "$NS" get secret bnpb-secrets -o jsonpath='{.data.MONGO_RO
 PLACEMENT="$(kubectl -n "$NS" get pods -l bnpb/mongo-member=true \
   -o jsonpath='{range .items[*]}{.metadata.labels.bnpb/replset}={.spec.nodeName}{"\n"}{end}' | grep -v '^cfg=' | tr '\n' ';')"
 
-kubectl -n "$NS" exec ds/mongos -c mongos -- mongosh --quiet -u root -p "$ROOT_PW" --authenticationDatabase admin "$DB" --eval "
+kubectl -n "$NS" exec ds/mongos -c mongos -- mongosh --quiet -u root --password="$ROOT_PW" --authenticationDatabase admin "$DB" --eval "
 const placement = {};
 for (const pair of '$PLACEMENT'.split(';').filter(Boolean)) {
   const [shard, node] = pair.split('=');

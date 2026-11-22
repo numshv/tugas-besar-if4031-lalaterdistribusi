@@ -127,12 +127,17 @@ spec:
               command: ["bash", "-c", "echo > /dev/tcp/127.0.0.1/$PORT"]
             periodSeconds: 5
             timeoutSeconds: 2
+          startupProbe:
+            exec:
+              command: ["bash", "-c", "echo > /dev/tcp/127.0.0.1/$PORT"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
           livenessProbe:
             exec:
               command: ["bash", "-c", "echo > /dev/tcp/127.0.0.1/$PORT"]
-            initialDelaySeconds: 30
             periodSeconds: 10
-            timeoutSeconds: 2
+            timeoutSeconds: 5
             failureThreshold: 6
       volumes:
         - name: keyfile-src
