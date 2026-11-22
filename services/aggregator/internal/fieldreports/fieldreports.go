@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"log/slog"
 	"time"
 
@@ -21,6 +23,11 @@ import (
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/fieldreport"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/dlq"
 )
+
+var storedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "field_reports_stored_total",
+	Help: "Field report deliveries handled by the aggregator, by result (stored, redelivered, conflict, parked).",
+}, []string{"result"})
 
 const Source = "FIELD_REPORT"
 
@@ -56,18 +63,21 @@ func (c *Consumer) Handle(ctx context.Context, log *slog.Logger, m kafka.Message
 	}
 
 	hash := r.Hash()
-	inserted, stored, err := c.Store.Save(ctx, r, hash, now)
+	inserted, storedHash, err := c.Store.Save(ctx, r, hash, now)
 	if err != nil {
 		return fmt.Errorf("store field report %s: %w", r.ReportID, err)
 	}
 	switch {
 	case inserted:
+		storedTotal.WithLabelValues("stored").Inc()
 		log.Info("field_report_processed", "report_id", r.ReportID, "reporter", r.Reporter,
 			"queue_ms", now.Sub(r.AcceptedAt).Milliseconds())
-	case stored != hash:
+	case storedHash != hash:
+		storedTotal.WithLabelValues("conflict").Inc()
 		log.Warn("idempotency_conflict", "report_id", r.ReportID,
 			"detail", "same key, different content; the first report is kept")
 	default:
+		storedTotal.WithLabelValues("redelivered").Inc()
 		log.Info("field_report_redelivered", "report_id", r.ReportID)
 	}
 	return nil
@@ -79,9 +89,14 @@ func (c *Consumer) park(ctx context.Context, log *slog.Logger, m kafka.Message, 
 		RefHint: string(m.Key), Payload: m.Value, ReceivedAt: now, Reason: "schema_incompatible: " + cause.Error(),
 		Attempts: 1, Status: dlq.StatusParked, UpdatedAt: now, CorrelationID: correlation.FromContext(ctx),
 	}
-	if _, err := c.DLQ.Put(ctx, msg); err != nil {
+	inserted, err := c.DLQ.Put(ctx, msg)
+	if err != nil {
 		return fmt.Errorf("park field report: %w", err)
 	}
+	if inserted {
+		dlq.Observe(Source, string(dlq.StatusParked))
+	}
+	storedTotal.WithLabelValues("parked").Inc()
 	log.Warn("field_report_parked", "message_id", msg.ID, "reason", msg.Reason)
 	return nil
 }

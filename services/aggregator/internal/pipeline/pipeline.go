@@ -240,6 +240,7 @@ func (p *Pipeline) put(ctx context.Context, m dlq.Message) error {
 		return fmt.Errorf("dead letter queue unavailable: %w", err)
 	}
 	if inserted {
+		dlq.Observe(m.Source, string(m.Status))
 		p.Log.WarnContext(ctx, "message set aside", "message_id", m.ID, "source", m.Source,
 			"kind", m.Kind, "status", m.Status, "reason", m.Reason)
 	}
@@ -342,6 +343,7 @@ func (p *Pipeline) settle(ctx context.Context, m dlq.Message, f *Failure, replay
 			p.Log.ErrorContext(ctx, "mark recovered failed", "message_id", m.ID, "error", err)
 			return
 		}
+		dlq.Observe(m.Source, string(dlq.StatusRecovered))
 		p.Log.InfoContext(ctx, "message recovered", "message_id", m.ID, "source", m.Source, "replay", replay)
 		return
 	}
@@ -354,6 +356,7 @@ func (p *Pipeline) settle(ctx context.Context, m dlq.Message, f *Failure, replay
 		p.Log.ErrorContext(ctx, "mark failed failed", "message_id", m.ID, "error", err)
 		return
 	}
+	dlq.Observe(m.Source, string(status))
 	p.Log.WarnContext(ctx, "message still failing", "message_id", m.ID, "source", m.Source,
 		"status", status, "attempts", attempts, "reason", f.Reason)
 }
@@ -384,6 +387,7 @@ func (p *Pipeline) Replay(ctx context.Context, source string) (ReplayResult, err
 			return res, nil
 		}
 		res.Replayed++
+		dlq.Observe(source, dlq.OutcomeReplayed)
 		if m.RefHint != "" && failedRefs[m.RefHint] {
 			res.Skipped++
 			res.Parked++

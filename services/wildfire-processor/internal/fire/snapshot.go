@@ -2,13 +2,14 @@ package fire
 
 import (
 	"errors"
+	"maps"
 	"sort"
 	"time"
 )
 
 // SnapshotFormat changes whenever the Snapshot layout does; an older snapshot
 // is then ignored and the engine replays the feed from offset 0 instead.
-const SnapshotFormat = 1
+const SnapshotFormat = 3
 
 // Snapshot is the complete engine state after some feed offset. Restoring it
 // and applying the rest of the feed gives exactly what a full replay gives:
@@ -19,6 +20,7 @@ type Snapshot struct {
 	Config       Config
 	Next         int64
 	MaxEventTime time.Time
+	SatelliteMax map[string]time.Time
 	VirtualNow   time.Time
 	Watermark    time.Time
 	Counters     Counters
@@ -57,7 +59,7 @@ func (e *Engine) Snapshot(profile string, now time.Time) (*Snapshot, error) {
 	}
 	s := &Snapshot{
 		Format: SnapshotFormat, Config: e.cfg, Next: e.next,
-		MaxEventTime: e.maxEventTime, VirtualNow: e.virtualNow, Watermark: e.watermark,
+		MaxEventTime: e.maxEventTime, SatelliteMax: maps.Clone(e.satMax), VirtualNow: e.virtualNow, Watermark: e.watermark,
 		Counters: e.counters, Late: append([]LateDetection(nil), e.late...),
 		Detections: make([]SnapshotDetection, 0, len(e.dets)),
 		Emitted:    make([]SnapshotEmitted, 0, len(e.state)),
@@ -81,11 +83,18 @@ func Restore(cfg Config, s *Snapshot) (*Engine, error) {
 	if s.Format != SnapshotFormat {
 		return nil, errors.New("snapshot format differs")
 	}
-	if s.Config != cfg {
+	// The epoch belongs to the session the snapshot was cut from, not to cfg.
+	theirs := s.Config
+	theirs.VersionEpoch = cfg.VersionEpoch
+	if theirs != cfg {
 		return nil, errors.New("snapshot was taken with a different config")
 	}
+	cfg.VersionEpoch = s.Config.VersionEpoch
 	e := New(cfg)
 	e.next, e.maxEventTime, e.virtualNow, e.watermark = s.Next, s.MaxEventTime, s.VirtualNow, s.Watermark
+	for sat, t := range s.SatelliteMax {
+		e.satMax[sat] = t
+	}
 	e.counters = s.Counters
 	e.late = append([]LateDetection(nil), s.Late...)
 	for _, sd := range s.Detections {

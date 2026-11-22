@@ -137,6 +137,7 @@ func run(log *slog.Logger) error {
 
 	go runPollers(ctx, log, p, mongoStore)
 	go pipe.RunRetrier(ctx, 2*time.Second)
+	go dlq.RunGauge(ctx, dlqStore, 30*time.Second, log)
 
 	fieldStore := fieldreports.NewMongoStore(mongoClient, cfg.MongoDB)
 	if cfg.FieldReportsTopic != "" {
@@ -159,7 +160,7 @@ func run(log *slog.Logger) error {
 		log.Info("KAFKA_UPSERTS_TOPIC not set, hazard-upserts consumer disabled")
 	}
 
-	ops := &api.Ops{DLQ: dlqStore, Replayer: pipe, AuditTokens: cfg.AuditTokens, FieldReports: fieldStore}
+	ops := &api.Ops{DLQ: dlqStore, Replayer: pipe, Retractor: pipe, AuditTokens: cfg.AuditTokens, FieldReports: fieldStore}
 	if cfg.JWKSURL != "" {
 		keys := jwtauth.NewBackgroundKeyProvider(ctx, cfg.JWKSURL, log, time.Minute)
 		ops.Verifier = &jwtauth.Verifier{Keys: keys, Issuer: cfg.JWTIssuer, Audience: cfg.JWTAudience}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"log/slog"
 	"net/http"
 	"time"
@@ -12,6 +14,18 @@ import (
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/fieldreport"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/httpx"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/jwtauth"
+)
+
+var (
+	received = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "field_reports_received_total",
+		Help: "POST /field-reports answers by result (accepted, missing_key, invalid, too_large, unauthorized, forbidden, kafka_unavailable).",
+	}, []string{"result"})
+	kafkaAck = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "field_report_kafka_ack_seconds",
+		Help:    "Time until Kafka acknowledged a field report with acks=all, which is what the 202 waits for.",
+		Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 3},
+	})
 )
 
 const HeaderIdempotencyKey = "Idempotency-Key"
@@ -50,15 +64,18 @@ func (h *Handler) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, ok := jwtauth.BearerToken(r.Header.Get("Authorization"))
 		if !ok {
+			countRejected(r, "unauthorized")
 			httpx.Error(w, http.StatusUnauthorized, "unauthorized", "Authorization Bearer wajib")
 			return
 		}
 		scope, sub, err := h.Verifier.Verify(token)
 		if err != nil {
+			countRejected(r, "unauthorized")
 			httpx.Error(w, http.StatusUnauthorized, "unauthorized", "token tidak valid")
 			return
 		}
 		if scope != jwtauth.ScopeField && scope != jwtauth.ScopeInternal {
+			countRejected(r, "forbidden")
 			httpx.Error(w, http.StatusForbidden, "forbidden", "hanya Tim Lapangan atau Internal Ops")
 			return
 		}
@@ -67,9 +84,17 @@ func (h *Handler) auth(next http.Handler) http.Handler {
 	})
 }
 
+// countRejected counts a refused submission; a refused status lookup is not one.
+func countRejected(r *http.Request, result string) {
+	if r.Method == http.MethodPost {
+		received.WithLabelValues(result).Inc()
+	}
+}
+
 func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	key := r.Header.Get(HeaderIdempotencyKey)
 	if !fieldreport.ValidKey(key) {
+		received.WithLabelValues("missing_key").Inc()
 		httpx.Error(w, http.StatusBadRequest, "missing_idempotency_key",
 			"header Idempotency-Key wajib, 8-128 karakter [A-Za-z0-9._-]")
 		return
@@ -81,13 +106,16 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	if err := dec.Decode(&in); err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
+			received.WithLabelValues("too_large").Inc()
 			httpx.Error(w, http.StatusRequestEntityTooLarge, "too_large", "body maksimal 16 KiB")
 			return
 		}
+		received.WithLabelValues("invalid").Inc()
 		httpx.Error(w, http.StatusBadRequest, "bad_request", "body bukan JSON laporan yang valid")
 		return
 	}
 	if err := in.Validate(); err != nil {
+		received.WithLabelValues("invalid").Inc()
 		httpx.Error(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
@@ -99,7 +127,11 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), h.ProduceTimeout)
 	defer cancel()
-	if err := h.Producer.Produce(ctx, report); err != nil {
+	produceStart := time.Now()
+	err := h.Producer.Produce(ctx, report)
+	kafkaAck.Observe(time.Since(produceStart).Seconds())
+	if err != nil {
+		received.WithLabelValues("kafka_unavailable").Inc()
 		h.Log.ErrorContext(r.Context(), "field report not accepted", "report_id", key, "error", err)
 		w.Header().Set("Retry-After", "2")
 		httpx.Error(w, http.StatusServiceUnavailable, "unavailable",
@@ -107,6 +139,7 @@ func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	received.WithLabelValues("accepted").Inc()
 	h.Log.InfoContext(r.Context(), "field report accepted", "report_id", key, "reporter", report.Reporter,
 		"correlation_id", correlation.FromContext(r.Context()))
 	w.Header().Set("Location", "/field-reports/"+key)

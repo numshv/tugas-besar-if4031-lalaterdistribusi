@@ -41,6 +41,8 @@ type Processor struct {
 	// instead of replaying the feed from offset 0.
 	Snapshots     SnapshotStore
 	SnapshotEvery time.Duration
+	// SessionEvery is how often /v1/session is checked; 5 s when zero.
+	SessionEvery time.Duration
 
 	mu         sync.Mutex
 	started    time.Time
@@ -51,7 +53,15 @@ type Processor struct {
 	flushNow   chan struct{}
 	lastSnap   time.Time
 	restoredAt int64
+
+	// carry holds retracts of a replaced session; they go out before anything else.
+	carry       []fire.Emit
+	resetSnap   *fire.Snapshot
+	regressions int
+	streamStop  context.CancelFunc
 }
+
+var errSessionReplaced = errors.New("feed session replaced")
 
 // Run blocks until ctx ends. Nothing is sent until the engine has replayed the
 // feed up to the offset that was latest at startup; from then on changes go
@@ -64,17 +74,30 @@ func (p *Processor) Run(ctx context.Context) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	restored := p.restore(ctx, sess)
+	restored, stale, floor := p.restore(ctx, sess)
 	p.mu.Lock()
+	// VERSION_EPOCH (in the starting engine) can only raise the epoch.
+	configured := p.Engine.Epoch()
 	if restored != nil {
+		restored.RaiseEpoch(configured)
 		p.Engine = restored
 		p.restoredAt = restored.Next() - 1
+	} else {
+		cfg := p.Engine.Config()
+		cfg.VersionEpoch = max(configured, newEpoch(floor))
+		p.Engine = fire.New(cfg)
 	}
+	if len(stale) > 0 {
+		p.carry = append(p.carry, retractMessages(stale, fire.EpochBase(p.Engine.Epoch()))...)
+		p.Log.Warn("retracting fires left by an earlier feed session", "fires", len(stale))
+	}
+	epochGauge.Set(float64(p.Engine.Epoch()))
 	p.latest, p.catchUpTo = sess, sess.LatestOffset
 	p.lastSnap = time.Now()
 	p.checkCaughtUp()
 	p.mu.Unlock()
-	p.Log.Info("catching up with the feed", "from", p.next(), "catch_up_to", sess.LatestOffset, "profile", sess.Profile, "speed", sess.Speed)
+	p.Log.Info("catching up with the feed", "from", p.next(), "catch_up_to", sess.LatestOffset,
+		"profile", sess.Profile, "speed", sess.Speed, "epoch", p.Engine.Epoch())
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -85,11 +108,15 @@ func (p *Processor) Run(ctx context.Context) error {
 	return ctx.Err()
 }
 
-// restore loads the last snapshot if it belongs to this feed session and was
-// taken with the same config; otherwise the engine starts from offset 0.
-func (p *Processor) restore(ctx context.Context, sess satfeed.Session) *fire.Engine {
+// restore loads the last snapshot. When it belongs to this feed session and was
+// taken with the same config, the engine resumes from it. When it belongs to an
+// earlier session (the session changed while the processor was down), the fires
+// it left live are returned so they can be retracted. Either way its epoch is a
+// floor for the next one, so a node clock that went back cannot produce
+// versions older than what is stored.
+func (p *Processor) restore(ctx context.Context, sess satfeed.Session) (e *fire.Engine, stale []string, epochFloor int64) {
 	if p.Snapshots == nil {
-		return nil
+		return nil, nil, 0
 	}
 	start := time.Now()
 	loadCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -98,23 +125,78 @@ func (p *Processor) restore(ctx context.Context, sess satfeed.Session) *fire.Eng
 	switch {
 	case err != nil:
 		p.Log.Warn("snapshot unavailable, replaying from offset 0", "error", err)
-		return nil
+		return nil, nil, 0
 	case snap == nil:
 		p.Log.Info("no snapshot yet, replaying from offset 0")
-		return nil
-	case snap.Profile != sess.Profile || snap.Next-1 > sess.LatestOffset:
+		return nil, nil, 0
+	}
+	epochFloor = snap.Config.VersionEpoch
+	if snap.Profile != sess.Profile || snap.Next-1 > sess.LatestOffset {
+		for _, em := range snap.Emitted {
+			if em.Alive {
+				stale = append(stale, em.ID)
+			}
+		}
 		p.Log.Warn("snapshot belongs to another feed session, replaying from offset 0",
 			"snapshot_profile", snap.Profile, "snapshot_offset", snap.Next-1, "feed_latest", sess.LatestOffset)
-		return nil
+		return nil, stale, epochFloor
 	}
-	e, err := fire.Restore(p.Engine.Config(), snap)
+	e, err = fire.Restore(p.Engine.Config(), snap)
 	if err != nil {
 		p.Log.Warn("snapshot not usable, replaying from offset 0", "error", err)
-		return nil
+		return nil, nil, epochFloor
 	}
 	restoredOffset.Set(float64(snap.Next - 1))
 	p.Log.Info("restored snapshot", "offset", snap.Next-1, "taken_at", snap.TakenAt, "seconds", time.Since(start).Seconds())
-	return e
+	return e, nil, epochFloor
+}
+
+func retractMessages(ids []string, version int64) []fire.Emit {
+	now := time.Now()
+	out := make([]fire.Emit, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, fire.Emit{
+			Message:   hazard.UpsertMessage{Op: hazard.OpRetract, Source: hazard.SourceSatelit, SourceRefID: id, Version: version},
+			ArrivedAt: now,
+		})
+	}
+	return out
+}
+
+// newEpoch is the current Unix time, and always above prev, so a later feed
+// session never gets a smaller epoch than an earlier one.
+func newEpoch(prev int64) int64 { return max(time.Now().Unix(), prev+1) }
+
+// changeSession must be called with p.mu held. It retracts every fire of the
+// old session, starts an empty engine with a newer epoch at offset 0 of the new
+// session, and cuts a snapshot right away so a restart keeps that epoch.
+func (p *Processor) changeSession(s satfeed.Session, reason string) {
+	old := p.Engine
+	epoch := newEpoch(old.Epoch())
+	retracts := old.RetractAll(fire.EpochBase(epoch), time.Now())
+	p.carry = append(p.carry, retracts...)
+
+	cfg := old.Config()
+	cfg.VersionEpoch = epoch
+	p.Engine = fire.New(cfg)
+	p.latest, p.catchUpTo = s, s.LatestOffset
+	p.caughtUp, p.started, p.restoredAt, p.regressions = false, time.Now(), 0, 0
+	if p.Snapshots != nil {
+		p.resetSnap, _ = p.Engine.Snapshot(s.Profile, time.Now())
+	}
+	if p.streamStop != nil {
+		p.streamStop()
+	}
+	caughtUp.Set(0)
+	epochGauge.Set(float64(epoch))
+	sessionChanges.WithLabelValues(reason).Inc()
+	p.Log.Warn("feed session replaced; old fires retracted, starting the new session from offset 0",
+		"reason", reason, "old_offset", old.Next()-1, "new_profile", s.Profile, "new_latest", s.LatestOffset,
+		"retracted", len(retracts), "epoch", epoch)
+	select {
+	case p.flushNow <- struct{}{}:
+	default:
+	}
 }
 
 func (p *Processor) waitSession(ctx context.Context) satfeed.Session {
@@ -143,15 +225,22 @@ func (p *Processor) consume(ctx context.Context) {
 	backoff := p.retryBase()
 	sinceFlush := 0
 	for ctx.Err() == nil {
+		connCtx, stop := context.WithCancel(ctx)
 		p.mu.Lock()
-		from := p.Engine.Next()
+		eng := p.Engine
+		from := eng.Next()
+		p.streamStop = stop
 		p.mu.Unlock()
 
 		got := 0
-		err := p.Feed.Stream(ctx, from, func(ev satfeed.Event) error {
+		err := p.Feed.Stream(connCtx, from, func(ev satfeed.Event) error {
 			got++
 			eventsTotal.WithLabelValues(ev.Type).Inc()
 			p.mu.Lock()
+			if p.Engine != eng {
+				p.mu.Unlock()
+				return errSessionReplaced
+			}
 			if err := p.Engine.Apply(ev, time.Now()); err != nil {
 				p.Log.Warn("feed event rejected", "error", err)
 			}
@@ -168,8 +257,15 @@ func (p *Processor) consume(ctx context.Context) {
 			}
 			return nil
 		})
+		stop()
 		if ctx.Err() != nil {
 			return
+		}
+		if errors.Is(err, errSessionReplaced) || errors.Is(err, context.Canceled) {
+			continue
+		}
+		if p.offsetRejected(ctx, err, from) {
+			continue
 		}
 		reason := classify(err)
 		reconnects.WithLabelValues(reason).Inc()
@@ -190,6 +286,23 @@ func (p *Processor) consume(ctx context.Context) {
 			return
 		}
 	}
+}
+
+// offsetRejected handles a 400 for our resume offset: if the feed is now behind
+// that offset, the session was replaced.
+func (p *Processor) offsetRejected(ctx context.Context, err error, from int64) bool {
+	var se *feed.StatusError
+	if !errors.As(err, &se) || se.Code != http.StatusBadRequest {
+		return false
+	}
+	s, serr := p.Feed.Session(ctx)
+	if serr != nil || s.LatestOffset >= from-1 {
+		return false
+	}
+	p.mu.Lock()
+	p.changeSession(s, "offset_rejected")
+	p.mu.Unlock()
+	return true
 }
 
 func classify(err error) string {
@@ -267,25 +380,31 @@ func (p *Processor) flusher(ctx context.Context) {
 // leaves behind, and it is saved only once the batch is in Kafka.
 func (p *Processor) flush(ctx context.Context, final bool) {
 	p.mu.Lock()
-	if !p.caughtUp {
-		p.mu.Unlock()
-		return
-	}
+	carry, resetSnap := p.carry, p.resetSnap
+	p.carry, p.resetSnap = nil, nil
 	var batch []fire.Emit
-	if p.Engine.PendingLen() > 0 {
-		batch = p.Engine.Drain()
-	}
 	var snap *fire.Snapshot
-	every := p.SnapshotEvery
-	if every <= 0 {
-		every = time.Minute
-	}
-	if p.Snapshots != nil && (final || time.Since(p.lastSnap) >= every) {
-		p.lastSnap = time.Now()
-		snap, _ = p.Engine.Snapshot(p.latest.Profile, p.lastSnap)
+	if p.caughtUp {
+		if p.Engine.PendingLen() > 0 {
+			batch = p.Engine.Drain()
+		}
+		every := p.SnapshotEvery
+		if every <= 0 {
+			every = time.Minute
+		}
+		if p.Snapshots != nil && (final || time.Since(p.lastSnap) >= every) {
+			p.lastSnap = time.Now()
+			snap, _ = p.Engine.Snapshot(p.latest.Profile, p.lastSnap)
+		}
 	}
 	p.mu.Unlock()
 
+	if len(carry) > 0 && !p.publish(ctx, carry) {
+		return
+	}
+	if resetSnap != nil {
+		p.saveSnapshot(ctx, resetSnap)
+	}
 	if len(batch) > 0 && !p.publish(ctx, batch) {
 		return
 	}
@@ -332,7 +451,11 @@ func (p *Processor) publish(ctx context.Context, batch []fire.Emit) bool {
 }
 
 func (p *Processor) watchSession(ctx context.Context) {
-	t := time.NewTicker(5 * time.Second)
+	every := p.SessionEvery
+	if every <= 0 {
+		every = 5 * time.Second
+	}
+	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
 		select {
@@ -345,12 +468,18 @@ func (p *Processor) watchSession(ctx context.Context) {
 			continue
 		}
 		p.mu.Lock()
-		if s.LatestOffset < p.latest.LatestOffset || s.Profile != p.latest.Profile {
-			sessionResets.Inc()
-			p.Log.Error("feed session was reset; restart with a higher VERSION_EPOCH so the new results replace the old ones",
-				"old_profile", p.latest.Profile, "new_profile", s.Profile, "old_latest", p.latest.LatestOffset, "new_latest", s.LatestOffset)
+		switch {
+		case p.latest.Profile != "" && s.Profile != p.latest.Profile:
+			p.changeSession(s, "profile_changed")
+		case s.LatestOffset < p.latest.LatestOffset:
+			// A single odd answer is not enough to throw every fire away.
+			if p.regressions++; p.regressions >= 2 {
+				p.changeSession(s, "offset_regressed")
+			}
+		default:
+			p.regressions = 0
+			p.latest = s
 		}
-		p.latest = s
 		p.mu.Unlock()
 		latestOffset.Set(float64(s.LatestOffset))
 	}
@@ -392,6 +521,7 @@ type Status struct {
 	Pending        int     `json:"pending"`
 	Profile        string  `json:"profile"`
 	Speed          float64 `json:"speed"`
+	Epoch          int64   `json:"epoch"`
 }
 
 func (p *Processor) Status() Status {
@@ -401,7 +531,7 @@ func (p *Processor) Status() Status {
 	return Status{
 		Summary: s, CaughtUp: p.caughtUp, CatchUpTo: p.catchUpTo, RebuildSeconds: p.rebuildDur.Seconds(), RestoredFrom: p.restoredAt,
 		LatestOffset: p.latest.LatestOffset, LagEvents: max(p.latest.LatestOffset-s.Offset, 0),
-		Pending: p.Engine.PendingLen(), Profile: p.latest.Profile, Speed: p.latest.Speed,
+		Pending: p.Engine.PendingLen(), Profile: p.latest.Profile, Speed: p.latest.Speed, Epoch: p.Engine.Epoch(),
 	}
 }
 

@@ -14,12 +14,20 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/hazard"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/jwtauth"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/dlq"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/pipeline"
 )
 
 type fakeReplayer struct{ calls int }
+
+type fakeRetractor struct{ sources []hazard.Source }
+
+func (f *fakeRetractor) RetractSource(_ context.Context, source hazard.Source) (int, error) {
+	f.sources = append(f.sources, source)
+	return 3, nil
+}
 
 func (f *fakeReplayer) Replay(_ context.Context, source string) (pipeline.ReplayResult, error) {
 	f.calls++
@@ -42,7 +50,7 @@ func newOpsServer(t *testing.T) (*httptest.Server, *rsa.PrivateKey, *dlq.MemoryS
 		})
 	}
 	ops := &Ops{
-		DLQ: q, Replayer: &fakeReplayer{}, AuditTokens: []string{"audit-secret"},
+		DLQ: q, Replayer: &fakeReplayer{}, Retractor: &fakeRetractor{}, AuditTokens: []string{"audit-secret"},
 		Verifier: &jwtauth.Verifier{Keys: jwtauth.NewStaticKeyProvider(&key.PublicKey), Issuer: "bnpb-auth", Audience: "client-api"},
 	}
 	srv := httptest.NewServer(New(nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)), 8, ops))
@@ -152,5 +160,27 @@ func TestInspectShowsPayload(t *testing.T) {
 	}
 	if code, _ := call(t, http.MethodGet, srv.URL+"/internal/ops/unprocessed/missing", "audit-secret"); code != 404 {
 		t.Errorf("missing message: HTTP %d", code)
+	}
+}
+
+func TestRetractSourceOnlyForInternalOps(t *testing.T) {
+	srv, key, _ := newOpsServer(t)
+	cases := []struct {
+		name, query, bearer string
+		want                int
+	}{
+		{"media", "?source=SATELIT", token(t, key, "media"), 403},
+		{"no token", "?source=SATELIT", "", 401},
+		{"unknown source", "?source=NOPE", token(t, key, "internal"), 400},
+		{"internal", "?source=SATELIT", token(t, key, "internal"), 200},
+	}
+	for _, c := range cases {
+		code, body := call(t, http.MethodPost, srv.URL+"/internal/ops/retract"+c.query, c.bearer)
+		if code != c.want {
+			t.Errorf("%s: HTTP %d, want %d (%v)", c.name, code, c.want, body)
+		}
+		if code == 200 && body["retracted"] != float64(3) {
+			t.Errorf("%s: body %v", c.name, body)
+		}
 	}
 }

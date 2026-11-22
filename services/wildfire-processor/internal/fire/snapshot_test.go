@@ -96,3 +96,48 @@ func TestSnapshotRefusesPendingAndOtherConfig(t *testing.T) {
 		t.Fatal("a snapshot from another config must not be used")
 	}
 }
+
+func TestEpochVersionsRetractAllAndRestore(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.VersionEpoch = 1_763_000_000
+	e := New(cfg)
+	for _, ev := range randomFeed(5, 60).events {
+		_ = e.Apply(ev, time.Now())
+	}
+	live := 0
+	for _, m := range e.Drain() {
+		if m.Message.Version <= EpochBase(cfg.VersionEpoch) {
+			t.Fatalf("version %d is not inside epoch %d", m.Message.Version, cfg.VersionEpoch)
+		}
+	}
+	for _, st := range e.state {
+		if st.alive {
+			live++
+		}
+	}
+	s, err := e.Snapshot("practice", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A restored engine keeps the snapshot's epoch, whatever the caller asks.
+	other := DefaultConfig()
+	other.VersionEpoch = 1_799_999_999
+	r, err := Restore(other, roundTrip(t, s))
+	if err != nil || r.Epoch() != cfg.VersionEpoch {
+		t.Fatalf("restored epoch %d, err %v", r.Epoch(), err)
+	}
+
+	next := EpochBase(cfg.VersionEpoch + 10)
+	out := e.RetractAll(next, time.Now())
+	if len(out) != live || live == 0 {
+		t.Fatalf("retracted %d of %d live fires", len(out), live)
+	}
+	for _, m := range out {
+		if m.Message.Op != "retract" || m.Message.Version != next {
+			t.Fatalf("unexpected %+v", m.Message)
+		}
+	}
+	if len(e.Fires()) == 0 || len(e.RetractAll(next, time.Now())) != 0 {
+		t.Fatal("a second RetractAll must send nothing")
+	}
+}

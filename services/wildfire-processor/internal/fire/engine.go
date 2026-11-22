@@ -19,8 +19,8 @@ type Config struct {
 	MaxGap          time.Duration
 	AllowedLateness time.Duration
 	MinDetections   int
-	// VersionEpoch is bumped when the feed session is reset, so versions from
-	// the new session are newer than everything stored from the old one.
+	// VersionEpoch is the era of the feed session; a newer session gets a larger
+	// one, so its versions beat everything stored from older sessions.
 	VersionEpoch int64
 }
 
@@ -92,6 +92,7 @@ type Engine struct {
 	open         map[*component]struct{}
 	late         []LateDetection
 	maxEventTime time.Time
+	satMax       map[string]time.Time // newest detection time per satellite
 	virtualNow   time.Time
 	watermark    time.Time
 	counters     Counters
@@ -107,7 +108,7 @@ type Engine struct {
 
 func New(cfg Config) *Engine {
 	return &Engine{
-		cfg: cfg, dets: map[string]*detection{}, grid: map[cell][]*detection{},
+		cfg: cfg, dets: map[string]*detection{}, grid: map[cell][]*detection{}, satMax: map[string]time.Time{},
 		comps: map[*component]struct{}{}, open: map[*component]struct{}{},
 		state: map[string]*emitted{}, pending: map[string]Emit{},
 		touched: map[string]struct{}{}, dirty: map[*component]struct{}{},
@@ -197,6 +198,9 @@ func (e *Engine) detection(data []byte) error {
 	if at.After(e.maxEventTime) {
 		e.maxEventTime = at
 	}
+	if at.After(e.satMax[d.satellite]) {
+		e.satMax[d.satellite] = at
+	}
 	if d.active() {
 		e.addActive(d)
 	}
@@ -275,20 +279,15 @@ func (e *Engine) heartbeat(data []byte) error {
 	e.counters.Heartbeats++
 	if hb.VirtualNow.After(e.virtualNow) {
 		e.virtualNow = hb.VirtualNow
-		e.advanceWatermark()
 	}
 	return nil
 }
 
-// advanceWatermark moves the watermark to the newest detection time minus the
-// allowed lateness. The feed's virtual clock (from heartbeats, so it is part of
-// the replayable log) caps it: a satellite whose clock runs ahead cannot push
-// everyone else's detections into the late list.
+// advanceWatermark moves the watermark to the median satellite's newest
+// detection time minus the allowed lateness. The feed's heartbeat clock is not
+// used: heartbeats only come when the feed is idle, so it lags by hours.
 func (e *Engine) advanceWatermark() {
-	ref := e.maxEventTime
-	if !e.virtualNow.IsZero() && e.virtualNow.Before(ref) {
-		ref = e.virtualNow
-	}
+	ref := e.watermarkRef()
 	if ref.IsZero() {
 		return
 	}
@@ -302,6 +301,21 @@ func (e *Engine) advanceWatermark() {
 			e.dirty[c] = struct{}{}
 		}
 	}
+}
+
+// watermarkRef is the median of the newest detection time per satellite (the
+// lower one of two), so one satellite whose clock runs ahead cannot push the
+// others' detections into the late list.
+func (e *Engine) watermarkRef() time.Time {
+	times := make([]time.Time, 0, len(e.satMax))
+	for _, t := range e.satMax {
+		times = append(times, t)
+	}
+	if len(times) == 0 {
+		return time.Time{}
+	}
+	sort.Slice(times, func(i, j int) bool { return times[i].Before(times[j]) })
+	return times[(len(times)-1)/2]
 }
 
 // final: no on-time detection can join once the watermark is past the last
@@ -482,7 +496,38 @@ func (e *Engine) fireID(c *component) string {
 	return "fire-" + hex.EncodeToString(sum[:8])
 }
 
-func (e *Engine) version() int64 { return e.cfg.VersionEpoch*1_000_000_000_000 + e.cur + 1 }
+// versionSpan leaves room for a billion feed offsets per epoch.
+const versionSpan = 1_000_000_000
+
+// EpochBase is the first version of an epoch.
+func EpochBase(epoch int64) int64 { return epoch * versionSpan }
+
+func (e *Engine) version() int64 { return EpochBase(e.cfg.VersionEpoch) + e.cur + 1 }
+
+func (e *Engine) Epoch() int64 { return e.cfg.VersionEpoch }
+
+// RaiseEpoch moves the engine to a later epoch; it never goes back.
+func (e *Engine) RaiseEpoch(epoch int64) {
+	if epoch > e.cfg.VersionEpoch {
+		e.cfg.VersionEpoch = epoch
+	}
+}
+
+// RetractAll retracts every live fire with the given version and hands over
+// everything pending. It is used when the feed session is replaced.
+func (e *Engine) RetractAll(version int64, now time.Time) []Emit {
+	for id, st := range e.state {
+		if !st.alive {
+			continue
+		}
+		st.alive = false
+		e.pending[id] = Emit{
+			Message:   hazard.UpsertMessage{Op: hazard.OpRetract, Source: hazard.SourceSatelit, SourceRefID: id, Version: version},
+			ArrivedAt: now,
+		}
+	}
+	return e.Drain()
+}
 
 // settle runs after every event: upserts the fires whose content changed and
 // retracts the IDs that existed before the event but not after it.
