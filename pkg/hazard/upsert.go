@@ -4,15 +4,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/correlation"
 )
 
 const (
 	OpUpsert  = "upsert"
 	OpRetract = "retract"
+	OpPurge   = "purge"
 
-	HeaderCorrelationID = "X-Correlation-ID"
+	SimPrefix = "sim-"
+
+	HeaderCorrelationID = correlation.Header
 	HeaderTraceparent   = "traceparent"
 	HeaderProducedAt    = "produced_at"
 	HeaderVersion       = "X-Hazard-Version"
@@ -66,8 +72,11 @@ func (m UpsertMessage) Key() string {
 }
 
 func (m UpsertMessage) Validate() error {
-	if m.Op != OpUpsert && m.Op != OpRetract {
-		return invalid("unknown_op", "op %q must be %q or %q", m.Op, OpUpsert, OpRetract)
+	if m.Op != OpUpsert && m.Op != OpRetract && m.Op != OpPurge {
+		return invalid("unknown_op", "op %q must be %q, %q or %q", m.Op, OpUpsert, OpRetract, OpPurge)
+	}
+	if m.Op == OpPurge && !strings.HasPrefix(m.SourceRefID, SimPrefix) {
+		return invalid("purge_not_allowed", "purge only deletes synthetic events whose source_ref_id starts with %q", SimPrefix)
 	}
 	if !m.Source.Known() {
 		return invalid("unknown_source", "source %q is not known", m.Source)
@@ -78,7 +87,7 @@ func (m UpsertMessage) Validate() error {
 	if m.Version <= 0 {
 		return invalid("bad_version", "version must be > 0, got %d", m.Version)
 	}
-	if m.Op == OpRetract {
+	if m.Op == OpRetract || m.Op == OpPurge {
 		return nil
 	}
 	if !m.HazardType.Known() {

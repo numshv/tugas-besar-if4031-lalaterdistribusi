@@ -77,3 +77,18 @@ func TestEncodeRejectsInvalid(t *testing.T) {
 		t.Fatal("producer must not be able to emit an invalid message")
 	}
 }
+
+func TestPurgeOnlyForSyntheticIDs(t *testing.T) {
+	ok := UpsertMessage{Op: OpPurge, Source: SourceBMKG, SourceRefID: "sim-spike-s1-000001", Version: 1}
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("synthetic purge must be valid: %v", err)
+	}
+	for _, ref := range []string{"EQ-1", "cat-0000001", "SIM-spike", "xsim-1"} {
+		bad := ok
+		bad.SourceRefID = ref
+		var invalid *InvalidUpsertError
+		if err := bad.Validate(); !errors.As(err, &invalid) || invalid.Reason != "purge_not_allowed" {
+			t.Fatalf("purge of %q: err = %v, want purge_not_allowed", ref, err)
+		}
+	}
+}

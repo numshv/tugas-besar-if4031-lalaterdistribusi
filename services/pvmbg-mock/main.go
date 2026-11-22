@@ -7,11 +7,11 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/envx"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/httpx"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/logging"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/pvmbg-mock/internal/api"
@@ -48,29 +48,29 @@ func run(log *slog.Logger) error {
 		return errors.New("PVMBG_ADMIN_TOKEN must differ from PVMBG_TOKEN")
 	}
 
-	port := envString("PVMBG_PORT", "8082")
-	delayMin := time.Duration(envInt("PVMBG_DELAY_MIN_MS", 500)) * time.Millisecond
-	delayMax := time.Duration(envInt("PVMBG_DELAY_MAX_MS", 3000)) * time.Millisecond
+	port := envx.String("PVMBG_PORT", "8082")
+	delayMin := time.Duration(envx.Int("PVMBG_DELAY_MIN_MS", 500)) * time.Millisecond
+	delayMax := time.Duration(envx.Int("PVMBG_DELAY_MAX_MS", 3000)) * time.Millisecond
 	if delayMax < delayMin {
 		return fmt.Errorf("PVMBG_DELAY_MAX_MS (%s) must not be below PVMBG_DELAY_MIN_MS (%s)", delayMax, delayMin)
 	}
 
-	outageMode := envString("PVMBG_OUTAGE_MODE", api.OutageModeError)
+	outageMode := envx.String("PVMBG_OUTAGE_MODE", api.OutageModeError)
 	if outageMode != api.OutageModeError && outageMode != api.OutageModeTimeout {
 		return fmt.Errorf("PVMBG_OUTAGE_MODE must be %q or %q", api.OutageModeError, api.OutageModeTimeout)
 	}
 
-	schemaVersion := envInt("PVMBG_SCHEMA_VERSION", volcanic.SchemaLegacy)
-	if schemaVersion != volcanic.SchemaLegacy && schemaVersion != volcanic.SchemaConfidence {
-		return fmt.Errorf("PVMBG_SCHEMA_VERSION must be %d or %d", volcanic.SchemaLegacy, volcanic.SchemaConfidence)
+	schemaVersion := envx.Int("PVMBG_SCHEMA_VERSION", volcanic.SchemaLegacy)
+	if !volcanic.ValidSchema(schemaVersion) {
+		return fmt.Errorf("PVMBG_SCHEMA_VERSION must be between %d and %d", volcanic.SchemaMin, volcanic.SchemaMax)
 	}
 
-	interval := time.Duration(envInt("PVMBG_EVENT_INTERVAL_SECONDS", 10)) * time.Second
+	interval := time.Duration(envx.Int("PVMBG_EVENT_INTERVAL_SECONDS", 10)) * time.Second
 	if interval <= 0 {
 		return errors.New("PVMBG_EVENT_INTERVAL_SECONDS must be positive")
 	}
 
-	seedCount := envInt("PVMBG_SEED_COUNT", minSeedCount)
+	seedCount := envx.Int("PVMBG_SEED_COUNT", minSeedCount)
 	if seedCount < minSeedCount {
 		log.Warn("seed count raised to contract minimum", "requested", seedCount, "applied", minSeedCount)
 		seedCount = minSeedCount
@@ -103,19 +103,4 @@ func run(log *slog.Logger) error {
 	}, log)
 
 	return httpx.ListenAndServe(ctx, ":"+port, httpx.Middleware(log)(handler), log)
-}
-
-func envString(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func envInt(key string, fallback int) int {
-	v, err := strconv.Atoi(os.Getenv(key))
-	if err != nil {
-		return fallback
-	}
-	return v
 }

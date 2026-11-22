@@ -1,0 +1,93 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: bnpb
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          - path: /login
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-service
+                port:
+                  number: 8084
+          - path: /refresh
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-service
+                port:
+                  number: 8084
+          - path: /.well-known
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-service
+                port:
+                  number: 8084
+          - path: /grafana
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  number: 3000
+          - path: /jaeger
+            pathType: Prefix
+            backend:
+              service:
+                name: jaeger
+                port:
+                  number: 16686
+          - path: /prometheus
+            pathType: Prefix
+            backend:
+              service:
+                name: prometheus
+                port:
+                  number: 9090
+          - path: /internal/audit
+            pathType: Prefix
+            backend:
+              service:
+                name: aggregator
+                port:
+                  number: 8083
+          - path: /internal/ops
+            pathType: Prefix
+            backend:
+              service:
+                name: aggregator
+                port:
+                  number: 8083
+          - path: /analytics
+            pathType: Prefix
+            backend:
+              service:
+                name: aggregator
+                port:
+                  number: 8083
+          - path: /internal/wildfire
+            pathType: Prefix
+            backend:
+              service:
+                name: wildfire-processor
+                port:
+                  number: 8086
+          - path: /field-reports
+            pathType: Prefix
+            backend:
+              service:
+                name: field-report-api
+                port:
+                  number: 8085
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: client-api
+                port:
+                  number: 8080

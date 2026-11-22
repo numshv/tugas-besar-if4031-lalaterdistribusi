@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard Analitik BNPB</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --ring: rgba(11,11,11,0.10);
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4;
+  --warning: #fab219; --critical: #d03b3b;
+  --warning-wash: #fff6e0; --critical-wash: #fbeaea;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
+    --warning-wash: #2e2510; --critical-wash: #2f1616;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,0.10);
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
+  --warning-wash: #2e2510; --critical-wash: #2f1616;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 40px; }
+header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
+h1 { font-size: 20px; margin: 0; }
+h2 { font-size: 15px; margin: 0 0 8px; }
+.meta { color: var(--ink-2); font-size: 13px; }
+button, input, select { font: inherit; color: inherit; }
+button { background: var(--surface); border: 1px solid var(--axis); border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+button[aria-pressed="true"] { border-color: var(--ink); font-weight: 600; }
+input, select { background: var(--surface); border: 1px solid var(--axis); border-radius: 6px; padding: 5px 8px; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.filters .sep { width: 1px; height: 22px; background: var(--axis); }
+.card { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px; padding: 14px 16px; }
+.grid { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
+.grid > *, .card { min-width: 0; }
+.two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+@media (max-width: 760px) { .two { grid-template-columns: minmax(0, 1fr); } }
+.chart-box { position: relative; height: 320px; }
+.chart-box.small { height: 260px; }
+.hero { font-size: 32px; font-weight: 600; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--grid); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+th button { border: 0; background: none; padding: 0; font-weight: 600; }
+.key { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 8px; border-radius: 1px; }
+.scroll { max-height: 300px; overflow: auto; }
+.banner { display: none; gap: 10px; align-items: flex-start; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--ring); }
+.banner.show { display: flex; }
+.banner.warning { background: var(--warning-wash); border-left: 4px solid var(--warning); }
+.banner.critical { background: var(--critical-wash); border-left: 4px solid var(--critical); }
+.banner .icon { font-weight: 700; }
+#login { position: fixed; inset: 0; display: none; place-items: center; background: var(--page); }
+#login.show { display: grid; }
+#login form { width: min(360px, calc(100vw - 32px)); display: grid; gap: 10px; }
+#login-error { color: var(--critical); min-height: 1.2em; }
+.muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<div id="login" class="show">
+  <form class="card" id="login-form">
+    <h1>Dashboard Analitik BNPB</h1>
+    <p class="meta">Masuk dengan akun <code>analytics-viewer</code> (atau BNPB Internal Ops).</p>
+    <label>Username <input id="username" autocomplete="username" required></label>
+    <label>Password <input id="password" type="password" autocomplete="current-password" required></label>
+    <button type="submit">Masuk</button>
+    <div id="login-error" role="alert"></div>
+  </form>
+</div>
+
+<main>
+  <header>
+    <h1>Dashboard Analitik HazardEvent</h1>
+    <div class="meta"><span id="asof">Belum dimuat</span> · <button id="logout" type="button">Keluar</button></div>
+  </header>
+
+  <div id="banner" class="banner" role="status" aria-live="polite"><span class="icon" id="banner-icon"></span><span id="banner-text"></span></div>
+
+  <div class="filters" role="group" aria-label="Rentang waktu">
+    <button type="button" data-range="24h">24 jam</button>
+    <button type="button" data-range="7d">7 hari</button>
+    <button type="button" data-range="30d" aria-pressed="true">30 hari</button>
+    <button type="button" data-range="1y">1 tahun</button>
+    <button type="button" data-range="all">Semua</button>
+    <span class="sep" aria-hidden="true"></span>
+    <label>Dari (UTC) <input id="from" type="datetime-local"></label>
+    <label>Sampai (UTC) <input id="to" type="datetime-local"></label>
+    <button type="button" id="apply-custom">Terapkan</button>
+    <span class="sep" aria-hidden="true"></span>
+    <label>Bucket <select id="bucket"><option value="">otomatis</option><option value="hour">jam</option><option value="day">hari</option><option value="week">minggu</option><option value="month">bulan</option></select></label>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <div class="grid two">
+        <div>
+          <h2>Total kejadian dalam rentang</h2>
+          <div class="hero" id="total">–</div>
+          <div class="meta" id="range-label"></div>
+        </div>
+        <div>
+          <table aria-label="Jumlah per jenis bahaya">
+            <thead><tr><th>Jenis bahaya</th><th class="num">Jumlah</th></tr></thead>
+            <tbody id="category-table"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Jumlah kejadian per jenis bahaya terhadap waktu (<span id="bucket-label">hari</span>, UTC, waktu kejadian)</h2>
+      <div class="chart-box"><canvas id="timeline" aria-label="Line chart jumlah kejadian per jenis bahaya"></canvas></div>
+    </section>
+
+    <div class="grid two">
+      <section class="card">
+        <h2>Jumlah per tingkat severity</h2>
+        <div class="chart-box small"><canvas id="severity" aria-label="Bar chart jumlah per severity"></canvas></div>
+        <table aria-label="Jumlah per severity"><tbody id="severity-table"></tbody></table>
+      </section>
+      <section class="card">
+        <h2>Jumlah per wilayah (area_name)</h2>
+        <input id="area-search" type="search" placeholder="Cari wilayah…" aria-label="Cari wilayah" style="width:100%;margin-bottom:8px">
+        <div class="scroll">
+          <table aria-label="Jumlah per wilayah">
+            <thead><tr><th><button type="button" data-sort="area_name">Wilayah</button></th><th class="num"><button type="button" data-sort="count">Jumlah</button></th></tr></thead>
+            <tbody id="area-table"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </div>
+</main>
+<script src="/analytics/static/chart.umd.js"></script>
+<script src="/analytics/static/app.js"></script>
+</body>
+</html>

@@ -3,6 +3,10 @@ kind: Kustomization
 resources:
   - ../../base
 images:
+  - name: bnpb/coastal-ingester
+    newTag: dev
+  - name: bnpb/field-receiver
+    newTag: dev
   - name: bnpb/aggregator
     newTag: dev
   - name: bnpb/bmkg-mock
@@ -18,6 +22,10 @@ images:
   - name: bnpb/consumer-notifier
     newTag: dev
   - name: bnpb/consumer-regional
+    newTag: dev
+  - name: bnpb/field-report-api
+    newTag: dev
+  - name: bnpb/wildfire-processor
     newTag: dev
 components:
   - mongo-delete-replicas

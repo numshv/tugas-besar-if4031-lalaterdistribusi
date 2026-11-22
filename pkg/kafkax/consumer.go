@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/segmentio/kafka-go"
+
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/correlation"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/envx"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/hazard"
 )
 
 type Handler func(ctx context.Context, log *slog.Logger, msg kafka.Message) error
@@ -17,6 +20,7 @@ type Handler func(ctx context.Context, log *slog.Logger, msg kafka.Message) erro
 const maxAttempts = 5
 
 func Run(ctx context.Context, log *slog.Logger, brokers []string, topic, groupID string, h Handler) {
+	h = observed(topic, groupID, h)
 	r := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:     brokers,
 		Topic:       topic,
@@ -41,7 +45,7 @@ func Run(ctx context.Context, log *slog.Logger, brokers []string, topic, groupID
 			continue
 		}
 
-		mlog := log.With("correlation_id", Header(m, "X-Correlation-ID"),
+		mlog := log.With("correlation_id", Header(m, correlation.Header),
 			"partition", m.Partition, "offset", m.Offset)
 
 		var herr error
@@ -65,6 +69,56 @@ func Run(ctx context.Context, log *slog.Logger, brokers []string, topic, groupID
 	}
 }
 
+// RunNoDrop is like Run, but a message whose handler keeps failing is retried
+// with backoff until it succeeds; its offset is committed only after success.
+// The partition waits meanwhile. Use it where losing a message is not allowed.
+func RunNoDrop(ctx context.Context, log *slog.Logger, brokers []string, topic, groupID string, h Handler) {
+	h = observed(topic, groupID, h)
+	r := kafka.NewReader(kafka.ReaderConfig{
+		Brokers:     brokers,
+		Topic:       topic,
+		GroupID:     groupID,
+		MinBytes:    1,
+		MaxBytes:    1e6,
+		MaxWait:     500 * time.Millisecond,
+		StartOffset: kafka.FirstOffset,
+	})
+	defer r.Close()
+	log.Info("consumer_started", "topic", topic, "group", groupID, "brokers", brokers, "mode", "no_drop")
+
+	for {
+		m, err := r.FetchMessage(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			log.Error("fetch_failed", "err", err)
+			time.Sleep(time.Second)
+			continue
+		}
+		mlog := log.With("correlation_id", Header(m, correlation.Header),
+			"partition", m.Partition, "offset", m.Offset)
+
+		backoff := 200 * time.Millisecond
+		for attempt := 1; ; attempt++ {
+			herr := h(ctx, mlog, m)
+			if herr == nil {
+				break
+			}
+			mlog.Warn("handler_failed", "attempt", attempt, "err", herr, "retry_in", backoff.String())
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+			backoff = min(backoff*2, 30*time.Second)
+		}
+		if err := r.CommitMessages(ctx, m); err != nil && ctx.Err() == nil {
+			mlog.Error("commit_failed", "err", err)
+		}
+	}
+}
+
 func Header(m kafka.Message, key string) string {
 	for _, h := range m.Headers {
 		if strings.EqualFold(h.Key, key) {
@@ -75,31 +129,18 @@ func Header(m kafka.Message, key string) string {
 }
 
 func DedupeKey(m kafka.Message, hazardID string) string {
-	if v := Header(m, "X-Hazard-Version"); v != "" {
+	if v := Header(m, hazard.HeaderVersion); v != "" {
 		return hazardID + "@" + v
 	}
 	return hazardID
 }
 
 func Brokers() ([]string, error) {
-	raw := os.Getenv("KAFKA_BROKERS")
-	var out []string
-	for _, b := range strings.Split(raw, ",") {
-		if b = strings.TrimSpace(b); b != "" {
-			out = append(out, b)
-		}
-	}
+	out := envx.List("KAFKA_BROKERS")
 	if len(out) == 0 {
 		return nil, errors.New("KAFKA_BROKERS kosong: set mis. kafka:9092")
 	}
 	return out, nil
-}
-
-func Env(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
 }
 
 type Dedupe struct {

@@ -43,13 +43,14 @@ func main() {
 	handler := api.NewHandler(os.Getenv("AGGREGATOR_BASE_URL"), log)
 
 	limitedMux := http.NewServeMux()
-	limitedMux.Handle("GET /hazards", api.RequireAuth(keys, issuer, audience)(http.HandlerFunc(handler.ListHazardsHandler)))
+	mediaMax := getEnvInt("CLIENT_API_MEDIA_MAX_CONCURRENCY", 40)
+	limitedMux.Handle("GET /hazards", api.RequireAuth(keys, issuer, audience)(api.ShedMedia(mediaMax)(http.HandlerFunc(handler.ListHazardsHandler))))
 
 	maxConcurrency := getEnvInt("CLIENT_API_MAX_CONCURRENCY", 150)
 
 	root := http.NewServeMux()
 	root.HandleFunc("GET /health", httpx.Health(service))
-	root.Handle("/", api.LimitConcurrency(maxConcurrency)(limitedMux))
+	root.Handle("/", httpx.LimitConcurrency(maxConcurrency, "client-api is at capacity")(limitedMux))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

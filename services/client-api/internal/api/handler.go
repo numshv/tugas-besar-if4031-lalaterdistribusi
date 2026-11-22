@@ -133,8 +133,11 @@ func (h *Handler) ListHazardsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filtered := make([]map[string]any, 0, len(events))
+	now := time.Now()
 	for _, ev := range events {
-		filtered = append(filtered, filterByScope(ev, scope, staleSince))
+		out := filterByScope(ev, scope, staleSince)
+		markStaleCoastal(out, ev, now)
+		filtered = append(filtered, out)
 	}
 
 	httpx.JSON(w, http.StatusOK, filtered)

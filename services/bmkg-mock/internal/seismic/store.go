@@ -71,6 +71,10 @@ func NewStore(seedCount int) *Store {
 	return s
 }
 
+func NewEmptyStore() *Store {
+	return &Store{run: fmt.Sprintf("%06x", rand.Uint32N(1<<24))}
+}
+
 func (s *Store) RunID() string { return s.run }
 
 func (s *Store) append(at time.Time, magnitude, depthKm float64, reg region, threat string) Event {

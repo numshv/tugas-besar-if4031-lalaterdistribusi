@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - prometheus.yaml
+  - grafana.yaml
+  - jaeger.yaml
+configMapGenerator:
+  - name: prometheus-config
+    files:
+      - prometheus.yml
+  - name: grafana-provisioning
+    files:
+      - datasources.yaml
+      - dashboards.yaml
+  - name: grafana-dashboards
+    files:
+      - bnpb-overview.json
+      - bnpb-reliability.json
+      - bnpb-storage.json
+      - bnpb-streams.json

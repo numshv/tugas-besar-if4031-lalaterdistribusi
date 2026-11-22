@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/hazard"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/analytics"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/store"
 )
 
@@ -345,6 +346,77 @@ func Run(t *testing.T, newStore Factory) {
 		if len(hidden) != 2 || len(shown) != 3 {
 			t.Fatalf("list latest hidden=%v shown=%v", hidden, shown)
 		}
+	})
+
+	t.Run("analytics counts categories, severity and areas like the raw events", func(t *testing.T) {
+		s := newStore(t, NewClock().Now)
+		src, ok := s.(interface {
+			Analytics(context.Context, analytics.Query, bool) (analytics.Result, error)
+		})
+		if !ok {
+			t.Skip("store has no analytics")
+		}
+		quake := event("an-quake", hazard.TypeSeismic, 1)
+		tsunami := event("an-tsunami", hazard.TypeSeismic, 1)
+		tsunami.Attributes = map[string]any{"potential_tsunami": true}
+		tsunami.Severity = hazard.SeverityAwas
+		volcano := event("an-volcano", hazard.TypeVolcanic, 1)
+		volcano.AreaName = "Area an-quake"
+		gone := event("an-gone", hazard.TypeSeismic, 1)
+		for _, e := range []hazard.Event{quake, tsunami, volcano, gone} {
+			mustUpsert(t, s, e, true)
+		}
+		if _, _, err := s.Retract(ctx, gone.Source, gone.SourceRefID, 2); err != nil {
+			t.Fatal(err)
+		}
+
+		q := analytics.Query{AllTime: true, Bucket: analytics.BucketDay}
+		r, err := src.Analytics(ctx, q, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.Total != 3 || r.ByCategory[analytics.CategoryGempa] != 1 || r.ByCategory[analytics.CategoryTsunami] != 1 || r.ByCategory[analytics.CategoryVolcanic] != 1 {
+			t.Fatalf("totals = %d %v", r.Total, r.ByCategory)
+		}
+		if r.BySeverity["AWAS"] != 1 || r.BySeverity["WASPADA"] != 2 {
+			t.Fatalf("severity = %v", r.BySeverity)
+		}
+		if len(r.ByArea) == 0 || r.ByArea[0].AreaName != "Area an-quake" || r.ByArea[0].Count != 2 {
+			t.Fatalf("areas = %v", r.ByArea)
+		}
+		if len(r.Buckets) != 1 || r.Series[analytics.CategoryTsunami][0] != 1 {
+			t.Fatalf("series = %v buckets = %v", r.Series, r.Buckets)
+		}
+		withRetracted, _ := src.Analytics(ctx, q, true)
+		if withRetracted.Total != 4 {
+			t.Fatalf("includeRetracted total = %d, want 4", withRetracted.Total)
+		}
+		outside, _ := src.Analytics(ctx, analytics.Query{From: time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC), To: time.Date(2030, 2, 1, 0, 0, 0, 0, time.UTC), Bucket: analytics.BucketDay}, false)
+		if outside.Total != 0 || len(outside.Buckets) != 32 {
+			t.Fatalf("empty range: total=%d buckets=%d", outside.Total, len(outside.Buckets))
+		}
+	})
+
+	t.Run("purge removes only synthetic events", func(t *testing.T) {
+		s := newStore(t, NewClock().Now)
+		sim := event("sim-spike-s1-000001", hazard.TypeSeismic, 1)
+		mustUpsert(t, s, sim, true)
+		deleted, err := s.Purge(ctx, sim.Source, sim.SourceRefID)
+		if err != nil || !deleted {
+			t.Fatalf("purge sim: deleted=%v err=%v", deleted, err)
+		}
+		if _, err := s.Get(ctx, sim.HazardID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("purged event still readable: %v", err)
+		}
+		if deleted, err := s.Purge(ctx, sim.Source, sim.SourceRefID); err != nil || deleted {
+			t.Fatalf("second purge must be a no-op: deleted=%v err=%v", deleted, err)
+		}
+		real := event("EQ-real", hazard.TypeSeismic, 1)
+		mustUpsert(t, s, real, true)
+		if _, err := s.Purge(ctx, real.Source, real.SourceRefID); !errors.Is(err, store.ErrInvalidEvent) {
+			t.Fatalf("purge of a real event err = %v, want ErrInvalidEvent", err)
+		}
+		mustGet(t, s, real.HazardID)
 	})
 
 	t.Run("retract before upsert leaves a tombstone that blocks older upserts", func(t *testing.T) {

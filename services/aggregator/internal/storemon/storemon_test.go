@@ -146,8 +146,8 @@ func (fakeStats) Stats(_ context.Context, u Unit) (UnitStats, error) {
 	}
 	stats := UnitStats{Ops: map[string]int64{"insert": 7}, ReplOps: map[string]int64{"insert": 3}}
 	if u.Data {
-		docs, size := int64(42), int64(1024)
-		stats.Docs, stats.DataBytes = &docs, &size
+		size := int64(1024)
+		stats.Docs, stats.DataBytes = map[string]int64{"hazard_events": 42, "exp_by_area": 7}, &size
 	}
 	return stats, nil
 }
@@ -162,10 +162,12 @@ func TestCollectorExportsMetrics(t *testing.T) {
 	reg := prometheus.NewPedanticRegistry()
 	reg.MustRegister(c)
 	expected := `
-# HELP store_docs hazard_events documents held by the storage unit.
+# HELP store_docs Documents held by the storage unit, per collection.
 # TYPE store_docs gauge
-store_docs{node="slot-a",shard="shard-0",unit="shard-0-a"} 42
-store_docs{node="slot-b",shard="shard-0",unit="shard-0-b"} 42
+store_docs{collection="exp_by_area",node="slot-a",shard="shard-0",unit="shard-0-a"} 7
+store_docs{collection="exp_by_area",node="slot-b",shard="shard-0",unit="shard-0-b"} 7
+store_docs{collection="hazard_events",node="slot-a",shard="shard-0",unit="shard-0-a"} 42
+store_docs{collection="hazard_events",node="slot-b",shard="shard-0",unit="shard-0-b"} 42
 # HELP store_unit_up 1 if the storage unit answers hello, 0 otherwise.
 # TYPE store_unit_up gauge
 store_unit_up{node="slot-a",shard="cfg",unit="cfg-a"} 1

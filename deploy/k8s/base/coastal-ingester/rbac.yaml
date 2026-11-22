@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: coastal-ingester
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: coastal-ingester-leases
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: coastal-ingester-leases
+subjects:
+  - kind: ServiceAccount
+    name: coastal-ingester
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: coastal-ingester-leases

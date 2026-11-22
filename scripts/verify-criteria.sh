@@ -115,6 +115,7 @@ if ! [[ "$live_ttl" =~ ^[1-9][0-9]*$ ]]; then
   live_ttl="${ACCESS_TOKEN_TTL_SECONDS:-60}"
 fi
 printf 'Live access token TTL: %s seconds\n' "$live_ttl"
+clock_leeway=30
 field_login="$(curl -sS --max-time 8 -o "$BODY" -w '%{http_code}' \
   -X POST "$AUTH/login" -H 'Content-Type: application/json' \
   -d "{\"username\":\"${CLIENT_FIELD_ID}\",\"password\":\"${CLIENT_FIELD_SECRET}\"}")"
@@ -127,8 +128,8 @@ else
   record "Initial access and refresh tokens issued" both-present both-present
   before_expiry="$(request -H "Authorization: Bearer ${OLD_ACCESS}" "$API/hazards?type=SEISMIC&limit=1")"
   record "Initial field access token works" 200 "$before_expiry"
-  printf 'Waiting %s seconds for natural access-token expiry...\n' "$((live_ttl + 2))"
-  sleep "$((live_ttl + 2))"
+  printf 'Waiting %s seconds for natural access-token expiry (TTL + %ss clock leeway)...\n' "$((live_ttl + clock_leeway + 2))" "$clock_leeway"
+  sleep "$((live_ttl + clock_leeway + 2))"
   expired_code="$(request -H "Authorization: Bearer ${OLD_ACCESS}" "$API/hazards?type=SEISMIC&limit=1")"
   record "Old access token rejected after natural expiry" 401 "$expired_code"
 

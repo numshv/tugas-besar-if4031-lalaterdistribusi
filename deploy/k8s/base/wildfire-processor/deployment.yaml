@@ -1,0 +1,68 @@
+# One replica: the feed allows one connection per group and kicks the older
+# one. Recreate stops the old pod before the new one connects. After a node
+# failure the pod is rescheduled after 30 s and resumes from the snapshot in
+# Kafka (or replays the feed from offset 0 when there is none).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wildfire-processor
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: wildfire-processor
+  template:
+    metadata:
+      labels:
+        app: wildfire-processor
+        role: consumer
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8086"
+        prometheus.io/path: /metrics
+    spec:
+      terminationGracePeriodSeconds: 30
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
+      containers:
+        - name: wildfire-processor
+          image: bnpb/wildfire-processor
+          ports:
+            - containerPort: 8086
+          envFrom:
+            - configMapRef:
+                name: bnpb-common
+            - configMapRef:
+                name: wildfire-processor-config
+          env:
+            - name: GOMEMLIMIT
+              value: 900MiB
+            - name: SATELLITE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: bnpb-secrets
+                  key: SATELLITE_TOKEN
+            - name: AUDIT_TOKENS
+              valueFrom:
+                secretKeyRef:
+                  name: bnpb-secrets
+                  key: AUDIT_TOKENS
+                  optional: true
+          resources:
+            requests:
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8086

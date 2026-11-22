@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/segmentio/kafka-go"
 
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/correlation"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/hazard"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/kafkax"
 )
 
 type Publisher interface {
@@ -56,6 +58,7 @@ func (p *KafkaPublisher) Publish(ctx context.Context, e hazard.Event) error {
 	for k, v := range hazard.EventHeaders(e) {
 		msg.Headers = append(msg.Headers, kafka.Header{Key: k, Value: []byte(v)})
 	}
+	msg.Headers = kafkax.InjectTrace(ctx, msg.Headers)
 
 	if err := p.writer.WriteMessages(ctx, msg); err != nil {
 		return fmt.Errorf("publish hazard_id=%s: %w", e.HazardID, err)
@@ -64,3 +67,12 @@ func (p *KafkaPublisher) Publish(ctx context.Context, e hazard.Event) error {
 }
 
 func (p *KafkaPublisher) Close() error { return p.writer.Close() }
+
+// Dipakai saat development lokal sebelum Kafka tersedia, atau di unit test.
+type LoggingPublisher struct{ Log *slog.Logger }
+
+func (p LoggingPublisher) Publish(ctx context.Context, e hazard.Event) error {
+	p.Log.InfoContext(ctx, "would publish (dev mode)", "hazard_id", e.HazardID, "severity", e.Severity)
+	return nil
+}
+func (p LoggingPublisher) Close() error { return nil }

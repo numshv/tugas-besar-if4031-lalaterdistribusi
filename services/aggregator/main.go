@@ -8,20 +8,24 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
-	"strings"
-	"sync"
 	"syscall"
 	"time"
 
-	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/hazard"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/envx"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/httpx"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/jwtauth"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/kafkax"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/logging"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/analytics"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/api"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/audit"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/dlq"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/fieldreports"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/mapper"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/pipeline"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/poller"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/publisher"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/schema"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/store"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/storemon"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/upserts"
@@ -61,6 +65,10 @@ func run(log *slog.Logger) error {
 	}()
 
 	mongoStore := store.NewMongoStore(mongoClient, cfg.MongoDB)
+	if os.Getenv("STORE_EXPERIMENTS") == "on" {
+		mongoStore.WithExperiments(true)
+		log.Warn("STORE_EXPERIMENTS=on: every write is shadowed into exp_by_area and exp_by_ingested")
+	}
 	indexCtx, cancelIndexes := context.WithTimeout(ctx, 10*time.Second)
 	if err := mongoStore.EnsureIndexes(indexCtx); err != nil {
 		cancelIndexes()
@@ -71,6 +79,20 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("init volcano resolver: %w", err)
 	}
+
+	dlqStore := dlq.NewMongoStore(mongoClient, cfg.MongoDB)
+	dlqIndexCtx, cancelDLQIndexes := context.WithTimeout(ctx, 10*time.Second)
+	if err := dlqStore.EnsureIndexes(dlqIndexCtx); err != nil {
+		cancelDLQIndexes()
+		return fmt.Errorf("ensure dlq indexes: %w", err)
+	}
+	cancelDLQIndexes()
+
+	rules, err := schema.Load(cfg.MappingRulesFile)
+	if err != nil {
+		return err
+	}
+	log.Info("mapping rules loaded", "file", cfg.MappingRulesFile, "sources", len(rules))
 
 	var members audit.Members
 	if cfg.Topology != "" {
@@ -94,6 +116,11 @@ func run(log *slog.Logger) error {
 	policy := mapper.ParsePolicy(cfg.UnknownFieldPolicy)
 	httpTimeout := cfg.HTTPTimeout
 
+	pipe := &pipeline.Pipeline{
+		Store: mongoStore, Pub: kafkaPub, DLQ: dlqStore, Rules: rules,
+		Resolver: volcanoResolver, Policy: policy, Log: log,
+	}
+
 	bmkgClient := poller.SourceClient{
 		HTTP:    httpx.NewClient(cfg.BMKGBaseURL, httpTimeout, log),
 		BaseURL: cfg.BMKGBaseURL,
@@ -105,20 +132,18 @@ func run(log *slog.Logger) error {
 		Header:  http.Header{"Authorization": {"Bearer " + cfg.PVMBGToken}},
 	}
 
-	retryQ := newPublishRetryQueue(500)
-
 	p := poller.New(log, cfg.PollInterval, httpTimeout, bmkgClient, pvmbgClient,
-		func(ctx context.Context, events, warnings []map[string]any) error {
-			hazards, mapErrs := mapper.MapSeismic(events, warnings, policy)
-			return persistAndPublish(ctx, mongoStore, kafkaPub, retryQ, hazards, mapErrs, log)
-		},
-		func(ctx context.Context, reports []map[string]any) error {
-			hazards, mapErrs := mapper.MapVolcanic(reports, volcanoResolver, policy)
-			return persistAndPublish(ctx, mongoStore, kafkaPub, retryQ, hazards, mapErrs, log)
-		},
-	)
+		pipe.IngestBMKG, pipe.IngestPVMBG)
 
-	go p.Run(ctx)
+	go runPollers(ctx, log, p, mongoStore)
+	go pipe.RunRetrier(ctx, 2*time.Second)
+	go dlq.RunGauge(ctx, dlqStore, 30*time.Second, log)
+
+	fieldStore := fieldreports.NewMongoStore(mongoClient, cfg.MongoDB)
+	if cfg.FieldReportsTopic != "" {
+		consumer := &fieldreports.Consumer{Store: fieldStore, DLQ: dlqStore, Now: time.Now}
+		go kafkax.RunNoDrop(ctx, log, cfg.KafkaBrokers, cfg.FieldReportsTopic, "aggregator.field-reports", consumer.Handle)
+	}
 
 	if cfg.UpsertsTopic != "" {
 		reader := upserts.NewReader(cfg.KafkaBrokers, cfg.UpsertsTopic, cfg.UpsertsGroup)
@@ -135,32 +160,31 @@ func run(log *slog.Logger) error {
 		log.Info("KAFKA_UPSERTS_TOPIC not set, hazard-upserts consumer disabled")
 	}
 
-	go func() {
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				retryQ.flush(ctx, kafkaPub, log)
-			}
-		}
-	}()
+	ops := &api.Ops{DLQ: dlqStore, Replayer: pipe, Retractor: pipe, AuditTokens: cfg.AuditTokens, FieldReports: fieldStore}
+	if cfg.JWKSURL != "" {
+		keys := jwtauth.NewBackgroundKeyProvider(ctx, cfg.JWKSURL, log, time.Minute)
+		ops.Verifier = &jwtauth.Verifier{Keys: keys, Issuer: cfg.JWTIssuer, Audience: cfg.JWTAudience}
+	}
 
 	auditAPI := audit.New(mongoStore, mongoStore, members, audit.Config{
 		Tokens:           cfg.AuditTokens,
 		IncludeRetracted: cfg.AuditIncludeRetracted,
 		PartialMode:      cfg.PartialMode,
 	}, log.With("component", "audit"))
+	auditAPI.Register("GET /internal/audit/unprocessed", ops.ListUnprocessed)
 	if len(cfg.AuditTokens) == 0 {
 		log.Warn("AUDIT_TOKENS not set, audit API answers 503 until a token is configured")
 	}
 
-	handler := api.New(mongoStore, p, log, cfg.MaxConcurrency)
+	handler := api.New(mongoStore, p, log, cfg.MaxConcurrency, ops)
 	root := http.NewServeMux()
 	root.Handle("GET /metrics", promhttp.Handler())
 	root.Handle("/internal/audit/", httpx.Middleware(log)(auditAPI))
+	dashboard := analytics.NewHandler(mongoStore, cfg.AuditIncludeRetracted, log.With("component", "analytics")).
+		Routes(jwtauth.RequireScopes(ops.Verifier, []string{jwtauth.ScopeAnalytics, jwtauth.ScopeInternal},
+			"dashboard analitik hanya untuk analytics-viewer atau BNPB Internal Ops"))
+	root.Handle("/analytics", httpx.Middleware(log)(dashboard))
+	root.Handle("/analytics/", httpx.Middleware(log)(dashboard))
 	root.Handle("/", httpx.Middleware(log)(handler))
 	return httpx.ListenAndServe(ctx, ":"+cfg.Port, root, log)
 }
@@ -183,28 +207,6 @@ func startStoreMonitor(ctx context.Context, cfg config, s *store.MongoStore, log
 	s.WithHealth(monitor, cfg.PartialMode)
 	log.Info("storage health monitor started", "units", len(topology.Units()), "partial_mode", cfg.PartialMode)
 	return units, monitor, nil
-}
-
-func persistAndPublish(ctx context.Context, s store.Store, pub publisher.Publisher, retryQ *publishRetryQueue, events []hazard.Event, mapErrs []error, log *slog.Logger) error {
-	for _, me := range mapErrs {
-		log.WarnContext(ctx, "skipping malformed record", "error", me)
-	}
-
-	for _, e := range events {
-		stored, applied, err := s.Upsert(ctx, e)
-		if err != nil {
-			return fmt.Errorf("upsert %s: %w", e.HazardID, err)
-		}
-		if !applied {
-			continue
-		}
-		if err := pub.Publish(ctx, stored); err != nil {
-			log.ErrorContext(ctx, "publish failed, queued for retry", "hazard_id", stored.HazardID, "error", err)
-			retryQ.enqueue(stored, log)
-			continue
-		}
-	}
-	return nil
 }
 
 type config struct {
@@ -235,31 +237,42 @@ type config struct {
 	KafkaTopic   string
 	UpsertsTopic string
 	UpsertsGroup string
+
+	MappingRulesFile  string
+	FieldReportsTopic string
+	JWKSURL           string
+	JWTIssuer         string
+	JWTAudience       string
 }
 
 func loadConfig() (config, error) {
 	cfg := config{
-		Port:                  envString("AGGREGATOR_PORT", "8083"),
-		PollInterval:          envSeconds("POLL_INTERVAL_SECONDS", 3),
-		HTTPTimeout:           envMillis("HTTP_CLIENT_TIMEOUT_MS", 5000),
-		MaxConcurrency:        envInt("AGG_MAX_CONCURRENCY", 64),
-		UnknownFieldPolicy:    envString("UNKNOWN_FIELD_POLICY", "passthrough"),
+		Port:                  envx.String("AGGREGATOR_PORT", "8083"),
+		PollInterval:          envx.Seconds("POLL_INTERVAL_SECONDS", 3),
+		HTTPTimeout:           envx.Millis("HTTP_CLIENT_TIMEOUT_MS", 5000),
+		MaxConcurrency:        envx.Int("AGG_MAX_CONCURRENCY", 64),
+		UnknownFieldPolicy:    envx.String("UNKNOWN_FIELD_POLICY", "passthrough"),
 		BMKGBaseURL:           os.Getenv("BMKG_BASE_URL"),
 		BMKGAPIKey:            os.Getenv("BMKG_API_KEY"),
 		PVMBGBaseURL:          os.Getenv("PVMBG_BASE_URL"),
 		PVMBGToken:            os.Getenv("PVMBG_TOKEN"),
 		MongoURI:              os.Getenv("MONGO_URI"),
 		MongoDB:               os.Getenv("MONGO_DB"),
-		KafkaBrokers:          strings.Split(os.Getenv("KAFKA_BROKERS"), ","),
+		KafkaBrokers:          envx.List("KAFKA_BROKERS"),
 		KafkaTopic:            os.Getenv("KAFKA_TOPIC"),
 		UpsertsTopic:          os.Getenv("KAFKA_UPSERTS_TOPIC"),
-		UpsertsGroup:          envString("KAFKA_UPSERTS_GROUP", "bnpb.aggregator.hazard-upserts"),
+		UpsertsGroup:          envx.String("KAFKA_UPSERTS_GROUP", "bnpb.aggregator.hazard-upserts"),
 		Topology:              os.Getenv("TOPOLOGY_JSON"),
 		MonitorUser:           os.Getenv("MONGO_MONITOR_USERNAME"),
 		MonitorPassword:       os.Getenv("MONGO_MONITOR_PASSWORD"),
 		Namespace:             os.Getenv("POD_NAMESPACE"),
-		AuditTokens:           audit.ParseTokens(os.Getenv("AUDIT_TOKENS")),
+		AuditTokens:           envx.List("AUDIT_TOKENS"),
 		AuditIncludeRetracted: os.Getenv("AUDIT_INCLUDE_RETRACTED") == "true",
+		MappingRulesFile:      os.Getenv("MAPPING_RULES_FILE"),
+		FieldReportsTopic:     os.Getenv("FIELD_REPORTS_TOPIC"),
+		JWKSURL:               os.Getenv("AUTH_JWKS_URL"),
+		JWTIssuer:             os.Getenv("JWT_ISSUER"),
+		JWTAudience:           os.Getenv("JWT_AUDIENCE"),
 	}
 	mode, err := store.ParsePartialMode(os.Getenv("STORE_PARTIAL_MODE"))
 	if err != nil {
@@ -275,72 +288,4 @@ func loadConfig() (config, error) {
 		return cfg, errors.New("PVMBG_TOKEN is required")
 	}
 	return cfg, nil
-}
-
-func envString(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-func envInt(key string, fallback int) int {
-	v, err := strconv.Atoi(os.Getenv(key))
-	if err != nil {
-		return fallback
-	}
-	return v
-}
-func envSeconds(key string, fallback int) time.Duration {
-	return time.Duration(envInt(key, fallback)) * time.Second
-}
-func envMillis(key string, fallback int) time.Duration {
-	return time.Duration(envInt(key, fallback)) * time.Millisecond
-}
-
-type publishRetryQueue struct {
-	mu    sync.Mutex
-	items []hazard.Event
-	max   int
-}
-
-func newPublishRetryQueue(max int) *publishRetryQueue {
-	return &publishRetryQueue{max: max}
-}
-
-func (q *publishRetryQueue) enqueue(e hazard.Event, log *slog.Logger) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if len(q.items) >= q.max {
-		log.Warn("publish retry queue full, dropping oldest pending event",
-			"dropped_hazard_id", q.items[0].HazardID)
-		q.items = q.items[1:]
-	}
-	q.items = append(q.items, e)
-}
-
-func (q *publishRetryQueue) flush(ctx context.Context, pub publisher.Publisher, log *slog.Logger) {
-	q.mu.Lock()
-	pending := q.items
-	q.items = nil
-	q.mu.Unlock()
-
-	if len(pending) == 0 {
-		return
-	}
-
-	var stillFailing []hazard.Event
-	for _, e := range pending {
-		if err := pub.Publish(ctx, e); err != nil {
-			log.WarnContext(ctx, "retry publish failed again", "hazard_id", e.HazardID, "error", err)
-			stillFailing = append(stillFailing, e)
-			continue
-		}
-		log.InfoContext(ctx, "retry publish succeeded", "hazard_id", e.HazardID)
-	}
-
-	if len(stillFailing) > 0 {
-		q.mu.Lock()
-		q.items = append(stillFailing, q.items...)
-		q.mu.Unlock()
-	}
 }

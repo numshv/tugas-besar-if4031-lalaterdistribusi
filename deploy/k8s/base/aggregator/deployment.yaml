@@ -3,7 +3,11 @@ kind: Deployment
 metadata:
   name: aggregator
 spec:
-  replicas: 1
+  replicas: 3
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: aggregator
@@ -14,6 +18,23 @@ spec:
         role: aggregator
     spec:
       serviceAccountName: aggregator
+      terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: aggregator
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 30
       containers:
         - name: aggregator
           image: bnpb/aggregator
@@ -61,18 +82,36 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
             - name: AUDIT_TOKENS
               valueFrom:
                 secretKeyRef:
                   name: bnpb-secrets
                   key: AUDIT_TOKENS
                   optional: true
+          volumeMounts:
+            - name: mapping-rules
+              mountPath: /etc/bnpb/mapping-rules
+              readOnly: true
           resources:
             requests:
               memory: 256Mi
+              cpu: 100m
             limits:
               memory: 512Mi
+              cpu: 500m
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
           readinessProbe:
             httpGet:
               path: /health
               port: 8083
+      volumes:
+        - name: mapping-rules
+          configMap:
+            name: aggregator-mapping-rules

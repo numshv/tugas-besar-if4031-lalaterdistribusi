@@ -131,6 +131,9 @@ func (c *Consumer) Handle(ctx context.Context, m kafka.Message) error {
 	if err != nil {
 		return c.park(ctx, m, reasonOf(err), err)
 	}
+	if msg.Op == hazard.OpPurge {
+		return c.purge(ctx, log, m, msg)
+	}
 
 	var stored hazard.Event
 	var applied bool
@@ -179,6 +182,28 @@ func (c *Consumer) Handle(ctx context.Context, m kafka.Message) error {
 	}
 	processed.WithLabelValues(string(msg.Source), msg.Op, result).Inc()
 	log.InfoContext(ctx, "hazard_upsert_"+result, "hazard_id", stored.HazardID, "op", msg.Op, "version", stored.Version)
+	return nil
+}
+
+func (c *Consumer) purge(ctx context.Context, log *slog.Logger, m kafka.Message, msg hazard.UpsertMessage) error {
+	var deleted bool
+	err := c.retry(ctx, log, "store", func() error {
+		var perr error
+		deleted, perr = c.Store.Purge(ctx, msg.Source, msg.SourceRefID)
+		return perr
+	})
+	if errors.Is(err, store.ErrInvalidEvent) {
+		return c.park(ctx, m, "purge_not_allowed", err)
+	}
+	if err != nil {
+		return err
+	}
+	result := "purged"
+	if !deleted {
+		result = "purge_missing"
+	}
+	processed.WithLabelValues(string(msg.Source), msg.Op, result).Inc()
+	log.InfoContext(ctx, "hazard_upsert_"+result, "source_ref_id", msg.SourceRefID)
 	return nil
 }
 

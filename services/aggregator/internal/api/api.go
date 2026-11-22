@@ -19,7 +19,9 @@ type Handler struct {
 	latest *latestCache
 }
 
-func New(s store.Store, p *poller.Poller, log *slog.Logger, maxConcurrency int) http.Handler {
+// New builds the aggregator's HTTP API. ops may be nil, in which case the dead
+// letter queue endpoints are not served.
+func New(s store.Store, p *poller.Poller, log *slog.Logger, maxConcurrency int, ops *Ops) http.Handler {
 	h := &Handler{store: s, poller: p, log: log, latest: newLatestCache()}
 
 	limited := http.NewServeMux()
@@ -29,7 +31,10 @@ func New(s store.Store, p *poller.Poller, log *slog.Logger, maxConcurrency int) 
 
 	root := http.NewServeMux()
 	root.HandleFunc("GET /health", httpx.Health("aggregator"))
-	root.Handle("/", limitConcurrency(maxConcurrency)(limited))
+	if ops != nil {
+		ops.register(root)
+	}
+	root.Handle("/", httpx.LimitConcurrency(maxConcurrency, "aggregator internal API is at capacity")(limited))
 
 	return root
 }
@@ -101,23 +106,4 @@ func parseSinceOrZero(r *http.Request) time.Time {
 		return time.Time{}
 	}
 	return t.UTC()
-}
-
-func limitConcurrency(max int) func(http.Handler) http.Handler {
-	if max <= 0 {
-		max = 64
-	}
-	sem := make(chan struct{}, max)
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
-				next.ServeHTTP(w, r)
-			default:
-				httpx.Error(w, http.StatusTooManyRequests, "too_many_requests",
-					"aggregator internal API is at capacity")
-			}
-		})
-	}
 }

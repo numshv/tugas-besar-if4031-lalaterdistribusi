@@ -1,10 +1,18 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: sistem-informasi-kebencanaan-bnpb
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: bnpb
 resources:
   - namespace.yaml
+  - ingress.yaml
   - mongodb
   - kafka
+  - observability
+  - sensor-pantai
+  - coastal-ingester
+  - field-receiver
   - aggregator
   - bmkg-mock
   - pvmbg-mock
@@ -13,6 +21,8 @@ resources:
   - consumer-dashboard
   - consumer-notifier
   - consumer-regional
+  - field-report-api
+  - wildfire-processor
 configMapGenerator:
   - name: bnpb-common
     literals:
@@ -23,3 +33,17 @@ configMapGenerator:
       - MONGO_DB=bnpb
       - JWT_ISSUER=bnpb-auth
       - JWT_AUDIENCE=client-api
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+patches:
+  - target:
+      kind: Deployment
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: any
+      spec:
+        template:
+          metadata:
+            annotations:
+              prometheus.io/scrape: "true"

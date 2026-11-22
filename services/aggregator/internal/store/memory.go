@@ -93,6 +93,18 @@ func (m *Memory) Retract(_ context.Context, source hazard.Source, sourceRefID st
 	return copyEvent(current), true, nil
 }
 
+func (m *Memory) Purge(_ context.Context, source hazard.Source, sourceRefID string) (bool, error) {
+	if err := validatePurge(source, sourceRefID); err != nil {
+		return false, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id := hazard.NewID(source, sourceRefID)
+	_, existed := m.events[id]
+	delete(m.events, id)
+	return existed, nil
+}
+
 func (m *Memory) CommitPoll(_ context.Context, source hazard.Source, epoch int64, cursor string, events []hazard.Event) ([]hazard.Event, error) {
 	for _, e := range events {
 		if err := validateEvent(e); err != nil {
