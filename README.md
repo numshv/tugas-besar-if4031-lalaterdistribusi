@@ -142,30 +142,39 @@ Everything runs in the namespace `sistem-informasi-kebencanaan-bnpb`. Manifests 
 Kustomize: `deploy/k8s/base/<service>/` per service, `overlays/dev` (k3d, local images) and
 `overlays/demo` (VM cluster, images from GHCR, HPA on).
 
-**Topology declaration** (fill in before the demo):
+**Topology declaration** (node-b and node-c: fill in before the demo):
 
 | Node | Role | Mongo slot | VM or native | Physical host | Host CPU / RAM |
 |---|---|---|---|---|---|
-| node-a | control plane + worker (never shut down by scenarios) | a | VM | _laptop_ | _cpu / ram_ |
+| node-a | control plane + worker (never shut down by scenarios) | a | VM: QEMU + WHPX, Ubuntu 24.04, 4 vCPU / 6 GB | Laptop 1: Lenovo 21SY, Windows 11 Pro | Intel Core Ultra 5 225U (12 cores / 14 threads) / 15 GB |
 | node-b | worker | b | VM | _laptop_ | _cpu / ram_ |
 | node-c | worker | c | VM | _laptop_ | _cpu / ram_ |
-| node-d | worker | d | VM | _laptop_ | _cpu / ram_ |
+| node-d | worker | d | VM: QEMU + WHPX, Ubuntu 24.04, 2 vCPU / 3.5 GB | Laptop 1 (same host as node-a) | Intel Core Ultra 5 225U (12 cores / 14 threads) / 15 GB |
 
-Scenarios that shut a node down target node-b, node-c or node-d only.
+Scenarios that shut a node down target node-b, node-c or node-d only. node-a and node-d share
+one physical host: the scenarios stop one VM at a time, but losing that whole laptop would take
+two copies of shard-2 (a, c, d) and shard-3 (a, b, d) at once. Nodes are joined over Tailscale
+(`NODE_IP=<tailscale ip>`, `FLANNEL_IFACE=tailscale0`); node-a and node-d also have a direct
+QEMU link (192.168.100.0/24) that Tailscale uses between them.
 
 **Cluster.** Demo nodes are VMs with their own kernel (k3d shares the host kernel and is for
 development only).
 
 ```bash
+# every node: same k3s version, pinned through the installer's own variable
+export INSTALL_K3S_VERSION=v1.37.2+k3s1
 # node-a
-sudo NODE_NAME=node-a bash infra/k3s/install-server.sh          # prints the join token
+sudo -E NODE_NAME=node-a bash infra/k3s/install-server.sh          # prints the join token
 # node-b, node-c, node-d
-sudo NODE_NAME=node-b SERVER_IP=<node-a ip> TOKEN=<token> bash infra/k3s/install-agent.sh
+sudo -E NODE_NAME=node-b SERVER_IP=<node-a ip> TOKEN=<token> bash infra/k3s/install-agent.sh
 # nodes on different laptops over Tailscale: add NODE_IP=<tailscale ip> FLANNEL_IFACE=tailscale0
 ```
 
 With VirtualBox, turn off host time sync so clock-skew scenarios are not undone:
 `VBoxManage setextradata <vm> "VBoxInternal/Devices/VMMDev/0/Config/GetHostTimeDisabled" 1`.
+QEMU guests have no host time sync. In every VM, sync the clock once at boot and then leave NTP
+off (`systemd-timesyncd` disabled, a oneshot unit runs `timedatectl set-ntp true`, waits for
+`NTPSynchronized=yes`, then `set-ntp false`), so a skew stays until the next reboot.
 
 Development cluster: `k3d cluster create bnpb --agents 3 -p "8090:80@loadbalancer"`.
 
@@ -219,6 +228,7 @@ NS=sistem-informasi-kebencanaan-bnpb
 kubectl -n $NS get leases                                   # who polls BMKG, PVMBG and Sensor Pantai, and the epoch
 kubectl -n $NS delete pod <holder of poller-bmkg>           # P2.3 failover: a new holder within ~20 s, epoch + 1
 # P2.5 freeze: on the VM host, VBoxManage controlvm <vm> pause; wait 30 s; VBoxManage controlvm <vm> resume
+#   QEMU node (node-d): send "stop" then "cont" to its monitor (tcp 127.0.0.1:4444 on laptop 1)
 #   the woken pod logs "lease no longer ours" and sends nothing; Grafana shows the epoch change
 # P2.4 clock skew and node kills: Tester Agent, e.g. kubectl exec -n tester-agent daemonset/tester-agent -- /app run practice <name>
 k6 run loadtest/m2/p2-sustained.js & loadtest/m2/p2-chaos.sh   # P2.6 + P2.8 (10,000 VUs, scale 3-5-2, rollout)
