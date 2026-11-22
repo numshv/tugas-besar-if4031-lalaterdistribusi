@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/hazard"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/httpx"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/jwtauth"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/services/aggregator/internal/dlq"
@@ -28,6 +29,11 @@ type Ops struct {
 	Verifier    *jwtauth.Verifier
 	// FieldReports is not routed by the ingress, so its lookup needs no token.
 	FieldReports FieldReportReader
+	Retractor    SourceRetractor
+}
+
+type SourceRetractor interface {
+	RetractSource(ctx context.Context, source hazard.Source) (int, error)
 }
 
 type FieldReportReader interface {
@@ -38,6 +44,9 @@ func (o *Ops) register(mux *http.ServeMux) {
 	mux.Handle("GET /internal/ops/unprocessed", o.requireInternal(http.HandlerFunc(o.ListUnprocessed)))
 	mux.Handle("GET /internal/ops/unprocessed/{id}", o.requireInternal(http.HandlerFunc(o.getUnprocessed)))
 	mux.Handle("POST /internal/ops/replay", o.requireInternal(http.HandlerFunc(o.replay)))
+	if o.Retractor != nil {
+		mux.Handle("POST /internal/ops/retract", o.requireInternal(http.HandlerFunc(o.retract)))
+	}
 	if o.FieldReports != nil {
 		mux.HandleFunc("GET /internal/field-reports/{id}", o.getFieldReport)
 	}
@@ -148,6 +157,25 @@ func (o *Ops) getUnprocessed(w http.ResponseWriter, r *http.Request) {
 		out["payload_base64"] = base64.StdEncoding.EncodeToString(m.Payload)
 	}
 	httpx.JSON(w, http.StatusOK, out)
+}
+
+func (o *Ops) retract(w http.ResponseWriter, r *http.Request) {
+	source := hazard.Source(r.URL.Query().Get("source"))
+	if !source.Known() {
+		httpx.Error(w, http.StatusBadRequest, "bad_request", "parameter source wajib diisi dengan sumber yang dikenal, contoh source=SATELIT")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	n, err := o.Retractor.RetractSource(ctx, source)
+	if err != nil {
+		httpx.JSON(w, http.StatusServiceUnavailable, map[string]any{
+			"error":     map[string]string{"code": "unavailable", "message": err.Error()},
+			"retracted": n,
+		})
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"source": source, "retracted": n})
 }
 
 func (o *Ops) replay(w http.ResponseWriter, r *http.Request) {
