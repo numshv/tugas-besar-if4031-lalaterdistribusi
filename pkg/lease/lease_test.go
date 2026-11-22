@@ -65,6 +65,33 @@ func TestLeaderThatStopsWorkingStepsDown(t *testing.T) {
 	}
 }
 
+func TestFailingLeaderLetsHealthyReplicaWin(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	sick := New(client, "ns", "poller-bmkg", "pod-sick", fast, log)
+	healthy := New(client, "ns", "poller-bmkg", "pod-healthy", fast, log)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var sickTerms atomic.Int32
+	sickLed := make(chan int64, 1)
+	go sick.Run(ctx, func(_ context.Context, epoch int64) {
+		sickTerms.Add(1) // returns at once, like a leader that cannot reach storage
+		select {
+		case sickLed <- epoch:
+		default:
+		}
+	})
+	waitEpoch(t, sickLed)
+
+	healthyEpochs, stop := campaign(t, healthy)
+	defer stop()
+	waitEpoch(t, healthyEpochs)
+	if n := sickTerms.Load(); n != 1 {
+		t.Fatalf("failing replica took the lease %d times before the healthy one got a turn", n)
+	}
+}
+
 func TestHandoverBumpsEpochAndFencesOldLeader(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))

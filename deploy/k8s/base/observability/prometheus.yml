@@ -17,7 +17,7 @@ scrape_configs:
         regex: Running
         action: keep
       - source_labels: [__meta_kubernetes_pod_label_app]
-        regex: grafana|jaeger|prometheus
+        regex: grafana|jaeger|prometheus|sensor-pantai
         action: drop
       - source_labels: [__meta_kubernetes_pod_label_app]
         target_label: app

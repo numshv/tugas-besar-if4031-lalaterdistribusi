@@ -74,7 +74,9 @@ func New(client kubernetes.Interface, namespace, name, identity string, timing T
 
 // Run campaigns until ctx ends. Each time this pod wins, lead runs with a context that
 // is cancelled when leadership is lost, and with the epoch of that term. When lead
-// returns on its own, the lease is released so another replica can take over.
+// returns on its own, the lease is released so another replica can take over. After each
+// term the pod sits out one lease period, so a replica that keeps failing (for example,
+// one that cannot reach storage) cannot win the lease it just released again and again.
 func (e *Elector) Run(ctx context.Context, lead func(ctx context.Context, epoch int64)) {
 	lock := &resourcelock.LeaseLock{
 		LeaseMeta:  metav1.ObjectMeta{Name: e.name, Namespace: e.namespace},
@@ -119,6 +121,10 @@ func (e *Elector) Run(ctx context.Context, lead func(ctx context.Context, epoch 
 		e.elector.Store(le)
 		le.Run(term)
 		stepDown()
+		select {
+		case <-ctx.Done():
+		case <-time.After(e.timing.LeaseDuration):
+		}
 	}
 }
 
