@@ -19,8 +19,8 @@ type Config struct {
 	MaxGap          time.Duration
 	AllowedLateness time.Duration
 	MinDetections   int
-	// VersionEpoch is bumped when the feed session is reset, so versions from
-	// the new session are newer than everything stored from the old one.
+	// VersionEpoch is the era of the feed session; a newer session gets a larger
+	// one, so its versions beat everything stored from older sessions.
 	VersionEpoch int64
 }
 
@@ -482,7 +482,31 @@ func (e *Engine) fireID(c *component) string {
 	return "fire-" + hex.EncodeToString(sum[:8])
 }
 
-func (e *Engine) version() int64 { return e.cfg.VersionEpoch*1_000_000_000_000 + e.cur + 1 }
+// versionSpan leaves room for a billion feed offsets per epoch.
+const versionSpan = 1_000_000_000
+
+// EpochBase is the first version of an epoch.
+func EpochBase(epoch int64) int64 { return epoch * versionSpan }
+
+func (e *Engine) version() int64 { return EpochBase(e.cfg.VersionEpoch) + e.cur + 1 }
+
+func (e *Engine) Epoch() int64 { return e.cfg.VersionEpoch }
+
+// RetractAll retracts every live fire with the given version and hands over
+// everything pending. It is used when the feed session is replaced.
+func (e *Engine) RetractAll(version int64, now time.Time) []Emit {
+	for id, st := range e.state {
+		if !st.alive {
+			continue
+		}
+		st.alive = false
+		e.pending[id] = Emit{
+			Message:   hazard.UpsertMessage{Op: hazard.OpRetract, Source: hazard.SourceSatelit, SourceRefID: id, Version: version},
+			ArrivedAt: now,
+		}
+	}
+	return e.Drain()
+}
 
 // settle runs after every event: upserts the fires whose content changed and
 // retracts the IDs that existed before the event but not after it.

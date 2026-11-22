@@ -8,7 +8,7 @@ import (
 
 // SnapshotFormat changes whenever the Snapshot layout does; an older snapshot
 // is then ignored and the engine replays the feed from offset 0 instead.
-const SnapshotFormat = 1
+const SnapshotFormat = 2
 
 // Snapshot is the complete engine state after some feed offset. Restoring it
 // and applying the rest of the feed gives exactly what a full replay gives:
@@ -81,9 +81,13 @@ func Restore(cfg Config, s *Snapshot) (*Engine, error) {
 	if s.Format != SnapshotFormat {
 		return nil, errors.New("snapshot format differs")
 	}
-	if s.Config != cfg {
+	// The epoch belongs to the session the snapshot was cut from, not to cfg.
+	theirs := s.Config
+	theirs.VersionEpoch = cfg.VersionEpoch
+	if theirs != cfg {
 		return nil, errors.New("snapshot was taken with a different config")
 	}
+	cfg.VersionEpoch = s.Config.VersionEpoch
 	e := New(cfg)
 	e.next, e.maxEventTime, e.virtualNow, e.watermark = s.Next, s.MaxEventTime, s.VirtualNow, s.Watermark
 	e.counters = s.Counters

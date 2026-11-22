@@ -34,8 +34,11 @@ var (
 	reconnects = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "wildfire_feed_reconnects_total", Help: "Feed reconnects, by reason.",
 	}, []string{"reason"})
-	sessionResets = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "wildfire_feed_session_resets_total", Help: "Times the feed session went back to an older offset or changed profile.",
+	sessionChanges = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "wildfire_feed_session_changes_total", Help: "Times the feed session was replaced, by how it was noticed.",
+	}, []string{"reason"})
+	epochGauge = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "wildfire_epoch", Help: "Epoch of the feed session being processed (Unix seconds when it was first seen).",
 	})
 	offsetGaps = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "wildfire_offset_gaps", Help: "Feed offsets that were skipped. Must stay 0.",
