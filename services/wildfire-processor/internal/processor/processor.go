@@ -74,16 +74,22 @@ func (p *Processor) Run(ctx context.Context) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	restored := p.restore(ctx, sess)
+	restored, stale, floor := p.restore(ctx, sess)
 	p.mu.Lock()
-	switch {
-	case restored != nil:
+	// VERSION_EPOCH (in the starting engine) can only raise the epoch.
+	configured := p.Engine.Epoch()
+	if restored != nil {
+		restored.RaiseEpoch(configured)
 		p.Engine = restored
 		p.restoredAt = restored.Next() - 1
-	case p.Engine.Epoch() == 0:
+	} else {
 		cfg := p.Engine.Config()
-		cfg.VersionEpoch = newEpoch(0)
+		cfg.VersionEpoch = max(configured, newEpoch(floor))
 		p.Engine = fire.New(cfg)
+	}
+	if len(stale) > 0 {
+		p.carry = append(p.carry, retractMessages(stale, fire.EpochBase(p.Engine.Epoch()))...)
+		p.Log.Warn("retracting fires left by an earlier feed session", "fires", len(stale))
 	}
 	epochGauge.Set(float64(p.Engine.Epoch()))
 	p.latest, p.catchUpTo = sess, sess.LatestOffset
@@ -102,11 +108,15 @@ func (p *Processor) Run(ctx context.Context) error {
 	return ctx.Err()
 }
 
-// restore loads the last snapshot if it belongs to this feed session and was
-// taken with the same config; otherwise the engine starts from offset 0.
-func (p *Processor) restore(ctx context.Context, sess satfeed.Session) *fire.Engine {
+// restore loads the last snapshot. When it belongs to this feed session and was
+// taken with the same config, the engine resumes from it. When it belongs to an
+// earlier session (the session changed while the processor was down), the fires
+// it left live are returned so they can be retracted. Either way its epoch is a
+// floor for the next one, so a node clock that went back cannot produce
+// versions older than what is stored.
+func (p *Processor) restore(ctx context.Context, sess satfeed.Session) (e *fire.Engine, stale []string, epochFloor int64) {
 	if p.Snapshots == nil {
-		return nil
+		return nil, nil, 0
 	}
 	start := time.Now()
 	loadCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -115,23 +125,42 @@ func (p *Processor) restore(ctx context.Context, sess satfeed.Session) *fire.Eng
 	switch {
 	case err != nil:
 		p.Log.Warn("snapshot unavailable, replaying from offset 0", "error", err)
-		return nil
+		return nil, nil, 0
 	case snap == nil:
 		p.Log.Info("no snapshot yet, replaying from offset 0")
-		return nil
-	case snap.Profile != sess.Profile || snap.Next-1 > sess.LatestOffset:
+		return nil, nil, 0
+	}
+	epochFloor = snap.Config.VersionEpoch
+	if snap.Profile != sess.Profile || snap.Next-1 > sess.LatestOffset {
+		for _, em := range snap.Emitted {
+			if em.Alive {
+				stale = append(stale, em.ID)
+			}
+		}
 		p.Log.Warn("snapshot belongs to another feed session, replaying from offset 0",
 			"snapshot_profile", snap.Profile, "snapshot_offset", snap.Next-1, "feed_latest", sess.LatestOffset)
-		return nil
+		return nil, stale, epochFloor
 	}
-	e, err := fire.Restore(p.Engine.Config(), snap)
+	e, err = fire.Restore(p.Engine.Config(), snap)
 	if err != nil {
 		p.Log.Warn("snapshot not usable, replaying from offset 0", "error", err)
-		return nil
+		return nil, nil, epochFloor
 	}
 	restoredOffset.Set(float64(snap.Next - 1))
 	p.Log.Info("restored snapshot", "offset", snap.Next-1, "taken_at", snap.TakenAt, "seconds", time.Since(start).Seconds())
-	return e
+	return e, nil, epochFloor
+}
+
+func retractMessages(ids []string, version int64) []fire.Emit {
+	now := time.Now()
+	out := make([]fire.Emit, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, fire.Emit{
+			Message:   hazard.UpsertMessage{Op: hazard.OpRetract, Source: hazard.SourceSatelit, SourceRefID: id, Version: version},
+			ArrivedAt: now,
+		})
+	}
+	return out
 }
 
 // newEpoch is the current Unix time, and always above prev, so a later feed
