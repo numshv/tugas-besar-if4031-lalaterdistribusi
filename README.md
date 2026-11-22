@@ -207,7 +207,7 @@ kubectl exec -n tester-agent daemonset/tester-agent -- /app list
 | `/field-reports` | field-report-api |
 | `/internal/audit/`, `/internal/ops/`, `/analytics` | aggregator |
 | `/internal/wildfire/` | wildfire-processor |
-| `/grafana/` (dashboards "BNPB Overview", "BNPB Reliability (P2 & P5)" and "BNPB Storage (P1)"), `/jaeger/`, `/prometheus/` | observability |
+| `/grafana/` (dashboards "BNPB Overview", "BNPB Reliability (P2 & P5)", "BNPB Storage (P1)" and "BNPB Streams (P3, field reports, P4)"), `/jaeger/`, `/prometheus/` | observability |
 
 **Configuration added in Milestone 2** (`.env` unless noted):
 
@@ -757,6 +757,7 @@ Ops JWT; Media and Field tokens get 403.
 | `GET /internal/ops/unprocessed?source=&limit=&cursor=` | Same listing for Internal Ops |
 | `GET /internal/ops/unprocessed/{message_id}` | One message with its exact payload |
 | `POST /internal/ops/replay?source=PVMBG` | Reprocess every parked message of a source, oldest first |
+| `POST /internal/ops/retract?source=SATELIT` | Retract every live HazardEvent of a source (one version above what is stored); fallback for clearing a replaced feed session |
 
 **Scenario** (Kubernetes, through the ingress on port 8090):
 
@@ -839,13 +840,14 @@ only writer of HazardEvents and applies a message only when its `version` is new
 | Source of truth | The feed itself. It replays from any offset, so the processor keeps its state in memory. After a restart it loads the newest snapshot and replays only the rest of the feed; without a usable snapshot it replays from offset 0. Nothing is sent until it reaches the offset that was latest at startup. |
 | Snapshot | Every 60 s and on shutdown, right after a batch reached Kafka: the whole engine state, gob + gzip, in the compacted topic `bnpb.wildfire-snapshots.v1` (one key, Kafka keeps the newest). Kafka is not tied to the processor's node, so a rescheduled pod finds it. A snapshot from another feed session or another config is ignored. Measured: 168k events → 5 MB, saved in 1.1 s, restored in 0.9 s; a full replay of 432k events took 94 s. |
 | Fire ID | `fire-` + hash of the detection that arrived first (lowest feed offset). Late detections arrive later, so they never rename a fire; a replay gives the same IDs. On a merge the older ID stays and the other is retracted. |
-| Version | Feed offset + 1 of the event that last changed the fire. A replay produces the same versions, so the aggregator ignores what it already has. |
+| Version | `epoch × 10⁹ + feed offset + 1` of the event that last changed the fire. A replay produces the same versions, so the aggregator ignores what it already has. |
+| Epoch | Unix seconds when the processor first saw the feed session, kept in the snapshot so a restart in the same session reuses it. A later session always gets a larger epoch, so its versions beat everything stored from earlier sessions. `VERSION_EPOCH` overrides it. |
 | Vanished fire | Retracted (`op: retract`), not deleted: the document stays with `retracted: true` and is hidden from the default listings. |
 | Lateness | Watermark = newest detection time − 360 min, capped by the feed's `virtual_now` from heartbeats. A detection older than the watermark is not applied but listed at `/internal/wildfire/late` and counted. Updates and retracts always apply. |
 | Final | A fire is final (`attributes.final`) once the watermark passes its last detection + 360 min: no new detection can join it any more. |
 | Province | Nearest centroid among 38 provinces, computed from a CC BY 4.0 GeoJSON (see `internal/fire/province.go`). |
 | Availability | 1 replica, `Recreate`, rescheduled 30 s after a node failure: the feed accepts one connection per group. |
-| Feed session reset | Detected (offset goes back or profile changes) and logged; raise `VERSION_EPOCH` so the new session's versions are newer than the stored ones. |
+| Feed session change | The exam (`POST /v1/exam/start`) is expected to replace the practice session. Noticed when the profile changes, when `latest_offset` goes back twice in a row (one odd answer is ignored), or when the feed answers 400 for our resume offset and is now behind it. The processor then retracts every fire of the old session, starts an empty engine with a newer epoch at offset 0, and saves a snapshot at once. If it restarted in between and lost the old fires, Internal Ops clear them with `POST /internal/ops/retract?source=SATELIT`. |
 
 Internal endpoints (audit token or Internal Ops JWT):
 
@@ -859,8 +861,13 @@ Metrics on `:8086/metrics`: `wildfire_lag_events`, `wildfire_watermark_lag_secon
 `wildfire_feed_latest_offset`, `wildfire_processed_offset`, `wildfire_detections{state}`,
 `wildfire_fires{state}`, `wildfire_feed_reconnects_total{reason}`, `wildfire_offset_gaps`,
 `wildfire_rebuild_seconds`, `wildfire_restored_offset`, `wildfire_snapshot_offset`,
-`wildfire_snapshot_bytes`, `wildfire_emit_delay_seconds`. End-to-end latency (feed
-arrival until stored) is the aggregator's `hazard_store_latency_seconds{source="SATELIT"}`.
+`wildfire_snapshot_bytes`, `wildfire_emit_delay_seconds`, `wildfire_epoch`,
+`wildfire_feed_session_changes_total{reason}`. End-to-end latency (feed arrival until
+stored) is the aggregator's `hazard_store_latency_seconds{source="SATELIT"}`. P3 and field
+reports add `aggregator_dlq_events_total{source,outcome}`, `aggregator_dlq_messages{source,status}`
+(every aggregator replica reads the same collection: use `max`), `field_reports_received_total{result}`,
+`field_report_kafka_ack_seconds` and `field_reports_stored_total{result}`. All of it is on the
+Grafana dashboard "BNPB Streams".
 
 Checks:
 
