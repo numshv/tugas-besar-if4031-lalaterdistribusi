@@ -24,6 +24,8 @@ const (
 	ScopeAnalytics = "analytics"
 )
 
+const ClockLeeway = 30 * time.Second
+
 var ErrInvalidToken = errors.New("token is invalid or expired")
 
 type KeyProvider struct {
@@ -145,7 +147,7 @@ func (v Verifier) Verify(token string) (scope, subject string, err error) {
 		}
 		return pub, nil
 	}, jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Alg()}),
-		jwt.WithIssuer(v.Issuer), jwt.WithAudience(v.Audience), jwt.WithExpirationRequired())
+		jwt.WithIssuer(v.Issuer), jwt.WithAudience(v.Audience), jwt.WithExpirationRequired(), jwt.WithLeeway(ClockLeeway))
 	if err != nil || !parsed.Valid {
 		return "", "", ErrInvalidToken
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/httpx"
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/jwtauth"
 )
 
 type contextKey string
@@ -40,7 +41,7 @@ func RequireAuth(keys *KeyProvider, issuer, audience string) func(http.Handler) 
 					return nil, fmt.Errorf("public key not yet available")
 				}
 				return pub, nil
-			}, jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Alg()}), jwt.WithIssuer(issuer), jwt.WithAudience(audience), jwt.WithExpirationRequired())
+			}, jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Alg()}), jwt.WithIssuer(issuer), jwt.WithAudience(audience), jwt.WithExpirationRequired(), jwt.WithLeeway(jwtauth.ClockLeeway))
 			if err != nil || !parsed.Valid {
 				httpx.Error(w, http.StatusUnauthorized, "invalid_token", "token is invalid or expired")
 				return

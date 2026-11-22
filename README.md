@@ -588,7 +588,9 @@ curl -s -H "Authorization: Bearer $FIELD" "$API/hazards?type=VOLCANIC" | grep -c
 
 `scripts/verify-criteria.sh` runs every check in this section and writes a PASS/FAIL
 report to `evidence/`, without tokens or credential values. It waits for the access
-token to expire, so it takes a little over a minute.
+token to expire, so it takes about a minute and a half: every validator accepts a token up to
+30 seconds past `exp` (`jwtauth.ClockLeeway`) so that clock skew between nodes does not cause
+spurious 401s.
 
 ```bash
 env -u MSYS_NO_PATHCONV bash scripts/verify-criteria.sh   # SUMMARY: FAIL=0
@@ -611,8 +613,8 @@ PAIR=$(login "$CLIENT_FIELD_ID" "$CLIENT_FIELD_SECRET")
 OLD_ACCESS=$(echo "$PAIR" | field access_token)
 OLD_REFRESH=$(echo "$PAIR" | field refresh_token)
 code -H "Authorization: Bearer $OLD_ACCESS" "$API/hazards?type=SEISMIC"    # 200
-sleep 65
-code -H "Authorization: Bearer $OLD_ACCESS" "$API/hazards?type=SEISMIC"    # 401, expired
+sleep 95
+code -H "Authorization: Bearer $OLD_ACCESS" "$API/hazards?type=SEISMIC"    # 401, expired (TTL 60 s + 30 s leeway)
 PAIR=$(curl -s -X POST "$AUTH/refresh" -H 'Content-Type: application/json' -d "{\"refresh_token\":\"$OLD_REFRESH\"}")
 NEW_ACCESS=$(echo "$PAIR" | field access_token)
 code -H "Authorization: Bearer $NEW_ACCESS" "$API/hazards?type=SEISMIC"    # 200
