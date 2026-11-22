@@ -171,9 +171,18 @@ Development cluster: `k3d cluster create bnpb --agents 3 -p "8090:80@loadbalance
 
 **Deploy (one command).** `scripts/deploy.sh dev` builds the images and loads them into k3d;
 `scripts/deploy.sh demo` pulls them from GHCR (built by `.github/workflows/images.yml` on every
-push to `dev` and `main`; the packages must be public, or add an `imagePullSecret`). Both create
-the Secrets from `.env`, label the Mongo slots from `MONGO_SLOT_NODES`, apply the overlay and
-prune objects that were removed from the manifests. Then install the Tester Agent:
+push to `dev` and `main`; the packages must be public, or add an `imagePullSecret`). Each build
+is tagged with its commit SHA and its branch; only `main` moves `latest`, which `overlays/demo`
+uses. Before the exam, pin the demo to one tested commit so that pods rescheduled during a node
+kill pull the same code:
+
+```bash
+SHA=$(git rev-parse origin/main)
+sed -i "s/newTag: latest/newTag: $SHA/" deploy/k8s/overlays/demo/kustomization.yaml
+```
+
+Both create the Secrets from `.env`, label the Mongo slots from `MONGO_SLOT_NODES`, apply the
+overlay and prune objects that were removed from the manifests. Then install the Tester Agent:
 
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/susTuna/if4031-tester-agent/ebb55261711123a9a211739ffbf140a275caa6da/manifest.yaml
