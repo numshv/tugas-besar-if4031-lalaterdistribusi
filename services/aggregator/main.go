@@ -137,6 +137,7 @@ func run(log *slog.Logger) error {
 
 	go runPollers(ctx, log, p, mongoStore)
 	go pipe.RunRetrier(ctx, 2*time.Second)
+	go dlq.RunGauge(ctx, dlqStore, 30*time.Second, log)
 
 	fieldStore := fieldreports.NewMongoStore(mongoClient, cfg.MongoDB)
 	if cfg.FieldReportsTopic != "" {
