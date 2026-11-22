@@ -142,38 +142,56 @@ Everything runs in the namespace `sistem-informasi-kebencanaan-bnpb`. Manifests 
 Kustomize: `deploy/k8s/base/<service>/` per service, `overlays/dev` (k3d, local images) and
 `overlays/demo` (VM cluster, images from GHCR, HPA on).
 
-**Topology declaration** (fill in before the demo):
+**Topology declaration** (node-b and node-c: fill in before the demo):
 
 | Node | Role | Mongo slot | VM or native | Physical host | Host CPU / RAM |
 |---|---|---|---|---|---|
-| node-a | control plane + worker (never shut down by scenarios) | a | VM | _laptop_ | _cpu / ram_ |
+| node-a | control plane + worker (never shut down by scenarios) | a | VM: QEMU + WHPX, Ubuntu 24.04, 4 vCPU / 6 GB | Laptop 1: Lenovo 21SY, Windows 11 Pro | Intel Core Ultra 5 225U (12 cores / 14 threads) / 15 GB |
 | node-b | worker | b | VM | _laptop_ | _cpu / ram_ |
 | node-c | worker | c | VM | _laptop_ | _cpu / ram_ |
-| node-d | worker | d | VM | _laptop_ | _cpu / ram_ |
+| node-d | worker | d | VM: QEMU + WHPX, Ubuntu 24.04, 2 vCPU / 3.5 GB | Laptop 1 (same host as node-a) | Intel Core Ultra 5 225U (12 cores / 14 threads) / 15 GB |
 
-Scenarios that shut a node down target node-b, node-c or node-d only.
+Scenarios that shut a node down target node-b, node-c or node-d only. node-a and node-d share
+one physical host: the scenarios stop one VM at a time, but losing that whole laptop would take
+two copies of shard-2 (a, c, d) and shard-3 (a, b, d) at once. Nodes are joined over Tailscale
+(`NODE_IP=<tailscale ip>`, `FLANNEL_IFACE=tailscale0`); node-a and node-d also have a direct
+QEMU link (192.168.100.0/24) that Tailscale uses between them.
 
 **Cluster.** Demo nodes are VMs with their own kernel (k3d shares the host kernel and is for
 development only).
 
 ```bash
+# every node: same k3s version, pinned through the installer's own variable
+export INSTALL_K3S_VERSION=v1.37.2+k3s1
 # node-a
-sudo NODE_NAME=node-a bash infra/k3s/install-server.sh          # prints the join token
+sudo -E NODE_NAME=node-a bash infra/k3s/install-server.sh          # prints the join token
 # node-b, node-c, node-d
-sudo NODE_NAME=node-b SERVER_IP=<node-a ip> TOKEN=<token> bash infra/k3s/install-agent.sh
+sudo -E NODE_NAME=node-b SERVER_IP=<node-a ip> TOKEN=<token> bash infra/k3s/install-agent.sh
 # nodes on different laptops over Tailscale: add NODE_IP=<tailscale ip> FLANNEL_IFACE=tailscale0
 ```
 
 With VirtualBox, turn off host time sync so clock-skew scenarios are not undone:
 `VBoxManage setextradata <vm> "VBoxInternal/Devices/VMMDev/0/Config/GetHostTimeDisabled" 1`.
+QEMU guests have no host time sync. In every VM, sync the clock once at boot and then leave NTP
+off (`systemd-timesyncd` disabled, a oneshot unit runs `timedatectl set-ntp true`, waits for
+`NTPSynchronized=yes`, then `set-ntp false`), so a skew stays until the next reboot.
 
 Development cluster: `k3d cluster create bnpb --agents 3 -p "8090:80@loadbalancer"`.
 
 **Deploy (one command).** `scripts/deploy.sh dev` builds the images and loads them into k3d;
 `scripts/deploy.sh demo` pulls them from GHCR (built by `.github/workflows/images.yml` on every
-push to `dev` and `main`; the packages must be public, or add an `imagePullSecret`). Both create
-the Secrets from `.env`, label the Mongo slots from `MONGO_SLOT_NODES`, apply the overlay and
-prune objects that were removed from the manifests. Then install the Tester Agent:
+push to `dev` and `main`; the packages must be public, or add an `imagePullSecret`). Each build
+is tagged with its commit SHA and its branch; only `main` moves `latest`, which `overlays/demo`
+uses. Before the exam, pin the demo to one tested commit so that pods rescheduled during a node
+kill pull the same code:
+
+```bash
+SHA=$(git rev-parse origin/main)
+sed -i "s/newTag: latest/newTag: $SHA/" deploy/k8s/overlays/demo/kustomization.yaml
+```
+
+Both create the Secrets from `.env`, label the Mongo slots from `MONGO_SLOT_NODES`, apply the
+overlay and prune objects that were removed from the manifests. Then install the Tester Agent:
 
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/susTuna/if4031-tester-agent/ebb55261711123a9a211739ffbf140a275caa6da/manifest.yaml
@@ -189,7 +207,7 @@ kubectl exec -n tester-agent daemonset/tester-agent -- /app list
 | `/field-reports` | field-report-api |
 | `/internal/audit/`, `/internal/ops/`, `/analytics` | aggregator |
 | `/internal/wildfire/` | wildfire-processor |
-| `/grafana/` (dashboards "BNPB Overview" and "BNPB Reliability (P2 & P5)"), `/jaeger/`, `/prometheus/` | observability |
+| `/grafana/` (dashboards "BNPB Overview", "BNPB Reliability (P2 & P5)" and "BNPB Storage (P1)"), `/jaeger/`, `/prometheus/` | observability |
 
 **Configuration added in Milestone 2** (`.env` unless noted):
 
@@ -210,6 +228,7 @@ NS=sistem-informasi-kebencanaan-bnpb
 kubectl -n $NS get leases                                   # who polls BMKG, PVMBG and Sensor Pantai, and the epoch
 kubectl -n $NS delete pod <holder of poller-bmkg>           # P2.3 failover: a new holder within ~20 s, epoch + 1
 # P2.5 freeze: on the VM host, VBoxManage controlvm <vm> pause; wait 30 s; VBoxManage controlvm <vm> resume
+#   QEMU node (node-d): send "stop" then "cont" to its monitor (tcp 127.0.0.1:4444 on laptop 1)
 #   the woken pod logs "lease no longer ours" and sends nothing; Grafana shows the epoch change
 # P2.4 clock skew and node kills: Tester Agent, e.g. kubectl exec -n tester-agent daemonset/tester-agent -- /app run practice <name>
 k6 run loadtest/m2/p2-sustained.js & loadtest/m2/p2-chaos.sh   # P2.6 + P2.8 (10,000 VUs, scale 3-5-2, rollout)
@@ -293,7 +312,9 @@ Units are named per member (`shard-2-c`, `cfg-a`) so the name survives a failove
 comes from the Kubernetes API (read-only Role `aggregator-pod-reader`). `GET /metrics` on the
 aggregator exposes `store_unit_up`, `store_unit_primary`, `store_docs`, `store_data_bytes`,
 `store_ops_total`, `store_repl_ops_total`, `store_query_duration_seconds` and
-`store_partial_reads_total`, labelled by `unit`, `shard` and `node`. Every aggregator replica
+`store_partial_reads_total`, labelled by `unit`, `shard` and `node`. Here `node` is the node that
+holds the unit, not the node of the aggregator pod; Prometheus keeps it because the `bnpb-pods` job
+sets `honor_labels: true`. Every aggregator replica
 exports the same unit series, so deduplicate with `max by (node, unit)` first. Write skew
 across nodes (1.0 means perfectly even):
 
@@ -353,7 +374,7 @@ curl -s -i -H "Authorization: Bearer $FIELD" "http://localhost:8080/hazards?limi
 Served by the aggregator under `/internal/audit/*` (the ingress routes it there) and protected
 by `Authorization: Bearer <token>`, where the token is one of the comma-separated values in
 `AUDIT_TOKENS` (Secret `bnpb-secrets`). Without any token configured the endpoints answer 503
-`audit_not_configured`; at most 4 audit requests run at once, the rest get 429. Errors use
+`audit_not_configured`; at most 16 audit requests run at once per aggregator pod, the rest get 429. Errors use
 `{"error":{"code":"...","message":"..."}}`; storage problems answer 503 or `partial: true`,
 never 500.
 
@@ -586,7 +607,9 @@ curl -s -H "Authorization: Bearer $FIELD" "$API/hazards?type=VOLCANIC" | grep -c
 
 `scripts/verify-criteria.sh` runs every check in this section and writes a PASS/FAIL
 report to `evidence/`, without tokens or credential values. It waits for the access
-token to expire, so it takes a little over a minute.
+token to expire, so it takes about a minute and a half: every validator accepts a token up to
+30 seconds past `exp` (`jwtauth.ClockLeeway`) so that clock skew between nodes does not cause
+spurious 401s.
 
 ```bash
 env -u MSYS_NO_PATHCONV bash scripts/verify-criteria.sh   # SUMMARY: FAIL=0
@@ -609,8 +632,8 @@ PAIR=$(login "$CLIENT_FIELD_ID" "$CLIENT_FIELD_SECRET")
 OLD_ACCESS=$(echo "$PAIR" | field access_token)
 OLD_REFRESH=$(echo "$PAIR" | field refresh_token)
 code -H "Authorization: Bearer $OLD_ACCESS" "$API/hazards?type=SEISMIC"    # 200
-sleep 65
-code -H "Authorization: Bearer $OLD_ACCESS" "$API/hazards?type=SEISMIC"    # 401, expired
+sleep 95
+code -H "Authorization: Bearer $OLD_ACCESS" "$API/hazards?type=SEISMIC"    # 401, expired (TTL 60 s + 30 s leeway)
 PAIR=$(curl -s -X POST "$AUTH/refresh" -H 'Content-Type: application/json' -d "{\"refresh_token\":\"$OLD_REFRESH\"}")
 NEW_ACCESS=$(echo "$PAIR" | field access_token)
 code -H "Authorization: Bearer $NEW_ACCESS" "$API/hazards?type=SEISMIC"    # 200

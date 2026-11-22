@@ -17,7 +17,7 @@ spec:
     metadata:
       labels:
         app: wildfire-processor
-        role: processor
+        role: consumer
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "8086"

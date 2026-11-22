@@ -13,6 +13,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+
+	"github.com/lalaterdistribusi/tugas-besar-if4031/pkg/jwtauth"
 )
 
 const keyID = "bnpb-auth-1"
@@ -131,7 +133,7 @@ func (iss *Issuer) parseAndVerify(tokenStr string) (jwt.MapClaims, error) {
 			return nil, errors.New("unexpected signing method")
 		}
 		return &iss.privateKey.PublicKey, nil
-	}, jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Alg()}), jwt.WithIssuer(iss.issuer), jwt.WithAudience(iss.audience), jwt.WithExpirationRequired())
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Alg()}), jwt.WithIssuer(iss.issuer), jwt.WithAudience(iss.audience), jwt.WithExpirationRequired(), jwt.WithLeeway(jwtauth.ClockLeeway))
 	if err != nil {
 		return nil, err
 	}

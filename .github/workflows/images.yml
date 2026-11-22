@@ -47,6 +47,7 @@ jobs:
           push: true
           tags: |
             ${{ steps.image.outputs.name }}:${{ github.sha }}
-            ${{ steps.image.outputs.name }}:latest
+            ${{ steps.image.outputs.name }}:${{ github.ref_name }}
+            ${{ github.ref_name == 'main' && format('{0}:latest', steps.image.outputs.name) || '' }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}

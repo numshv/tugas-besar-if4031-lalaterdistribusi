@@ -4,7 +4,7 @@
 # Usage: sudo NODE_NAME=node-a [NODE_IP=...] [FLANNEL_IFACE=...] bash install-server.sh
 set -euo pipefail
 
-args=(server --node-name "${NODE_NAME:-node-a}" --write-kubeconfig-mode 644)
+args=(server --node-name "${NODE_NAME:-node-a}" --write-kubeconfig-mode 644 --secrets-encryption)
 [ -n "${NODE_IP:-}" ] && args+=(--node-ip "$NODE_IP" --advertise-address "$NODE_IP")
 [ -n "${FLANNEL_IFACE:-}" ] && args+=(--flannel-iface "$FLANNEL_IFACE")
 
