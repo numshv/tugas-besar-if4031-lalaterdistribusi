@@ -157,7 +157,8 @@ func (e *Engine) fireIDOfKey(key string) string { return e.fireID(e.dets[key].co
 func TestLateDetectionIsCountedNotApplied(t *testing.T) {
 	f := &feed{}
 	f.detect("N20", t0, -2.0, 113.0, "n", 5)
-	f.detect("N21", t0.Add(10*time.Hour), -5.0, 120.0, "n", 5) // watermark -> t0+4h
+	f.detect("N21", t0.Add(10*time.Hour), -5.0, 120.0, "n", 5)
+	f.detect("N", t0.Add(10*time.Hour), -6.0, 121.0, "n", 5) // median of satellites -> t0+10h, watermark t0+4h
 	late := f.detect("N21", t0.Add(10*time.Minute), -2.0, 113.0+step, "n", 5)
 	e := run(t, f)
 	if len(e.Fires()) != 0 {
@@ -168,15 +169,19 @@ func TestLateDetectionIsCountedNotApplied(t *testing.T) {
 	}
 }
 
-func TestAheadClockDoesNotPushWatermark(t *testing.T) {
+func TestOneSatelliteAheadDoesNotPushWatermark(t *testing.T) {
 	f := &feed{}
-	f.heartbeat(t0.Add(time.Hour))
-	f.detect("N", t0.Add(20*time.Hour), -5.0, 120.0, "n", 5) // clock far ahead of the feed
 	f.detect("N20", t0, -2.0, 113.0, "n", 5)
 	f.detect("N21", t0, -2.0, 113.0+step, "n", 5)
+	f.detect("N", t0.Add(20*time.Hour), -5.0, 120.0, "n", 5) // this satellite's clock runs far ahead
+	f.detect("N20", t0.Add(10*time.Minute), -2.0, 113.0+2*step, "n", 5)
+	f.heartbeat(t0.Add(-3 * time.Hour)) // a stale feed clock does not hold the watermark back either
 	e := run(t, f)
-	if !e.Watermark().Equal(t0.Add(-5*time.Hour)) || e.Counters().Late != 0 || len(e.Fires()) != 1 {
-		t.Fatalf("watermark %s counters %+v fires %d", e.Watermark(), e.Counters(), len(e.Fires()))
+	if !e.Watermark().Equal(t0.Add(10*time.Minute-6*time.Hour)) || e.Counters().Late != 0 {
+		t.Fatalf("watermark %s counters %+v", e.Watermark(), e.Counters())
+	}
+	if fr := e.Fires(); len(fr) != 1 || fr[0].Attributes["detection_count"] != 3 {
+		t.Fatalf("fires %+v", fr)
 	}
 }
 
@@ -185,9 +190,16 @@ func TestFireBecomesFinalWhenWatermarkPassesIt(t *testing.T) {
 	f.detect("N20", t0, -2.0, 113.0, "n", 5)
 	f.detect("N21", t0, -2.0, 113.0+step, "n", 5)
 	f.detect("N", t0.Add(13*time.Hour), -5.0, 120.0, "n", 5)
+	f.detect("N21", t0.Add(13*time.Hour), -6.0, 121.0, "n", 5) // two satellites at t0+13h: watermark t0+7h
 	e := run(t, f)
-	if fr := e.Fires(); len(fr) != 1 || fr[0].Attributes["final"] != true {
-		t.Fatalf("fires %+v", fr)
+	var fire map[string]any
+	for _, fr := range e.Fires() {
+		if fr.Attributes["detection_count"] == 2 && fr.AreaName == "Kalimantan Tengah" {
+			fire = fr.Attributes
+		}
+	}
+	if fire == nil || fire["final"] != true {
+		t.Fatalf("fires %+v", e.Fires())
 	}
 }
 
