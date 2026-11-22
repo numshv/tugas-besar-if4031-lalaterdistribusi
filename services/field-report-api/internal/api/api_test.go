@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"errors"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"io"
 	"log/slog"
 	"net/http"
@@ -156,5 +157,28 @@ func TestStatus(t *testing.T) {
 	}
 	if s := get("wait-0001")["status"]; s != "pending" {
 		t.Errorf("unknown report status = %v", s)
+	}
+}
+
+func TestRefusedStatusLookupIsNotCountedAsAReport(t *testing.T) {
+	h := &Handler{Verifier: nil}
+	srv := httptest.NewServer(h.Routes())
+	defer srv.Close()
+	before := testutil.ToFloat64(received.WithLabelValues("unauthorized"))
+	resp, err := http.Get(srv.URL + "/field-reports/report-0001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("HTTP %d", resp.StatusCode)
+	}
+	if after := testutil.ToFloat64(received.WithLabelValues("unauthorized")); after != before {
+		t.Fatalf("a GET was counted as a refused report (%v -> %v)", before, after)
+	}
+	resp, _ = http.Post(srv.URL+"/field-reports", "application/json", nil)
+	resp.Body.Close()
+	if after := testutil.ToFloat64(received.WithLabelValues("unauthorized")); after != before+1 {
+		t.Fatalf("a refused POST was not counted (%v -> %v)", before, after)
 	}
 }

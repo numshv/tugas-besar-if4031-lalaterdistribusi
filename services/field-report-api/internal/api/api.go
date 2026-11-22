@@ -64,24 +64,31 @@ func (h *Handler) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, ok := jwtauth.BearerToken(r.Header.Get("Authorization"))
 		if !ok {
-			received.WithLabelValues("unauthorized").Inc()
+			countRejected(r, "unauthorized")
 			httpx.Error(w, http.StatusUnauthorized, "unauthorized", "Authorization Bearer wajib")
 			return
 		}
 		scope, sub, err := h.Verifier.Verify(token)
 		if err != nil {
-			received.WithLabelValues("unauthorized").Inc()
+			countRejected(r, "unauthorized")
 			httpx.Error(w, http.StatusUnauthorized, "unauthorized", "token tidak valid")
 			return
 		}
 		if scope != jwtauth.ScopeField && scope != jwtauth.ScopeInternal {
-			received.WithLabelValues("forbidden").Inc()
+			countRejected(r, "forbidden")
 			httpx.Error(w, http.StatusForbidden, "forbidden", "hanya Tim Lapangan atau Internal Ops")
 			return
 		}
 		ctx := context.WithValue(r.Context(), subjectKey, [2]string{sub, scope})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// countRejected counts a refused submission; a refused status lookup is not one.
+func countRejected(r *http.Request, result string) {
+	if r.Method == http.MethodPost {
+		received.WithLabelValues(result).Inc()
+	}
 }
 
 func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
