@@ -374,7 +374,7 @@ curl -s -i -H "Authorization: Bearer $FIELD" "http://localhost:8080/hazards?limi
 Served by the aggregator under `/internal/audit/*` (the ingress routes it there) and protected
 by `Authorization: Bearer <token>`, where the token is one of the comma-separated values in
 `AUDIT_TOKENS` (Secret `bnpb-secrets`). Without any token configured the endpoints answer 503
-`audit_not_configured`; at most 4 audit requests run at once, the rest get 429. Errors use
+`audit_not_configured`; at most 16 audit requests run at once per aggregator pod, the rest get 429. Errors use
 `{"error":{"code":"...","message":"..."}}`; storage problems answer 503 or `partial: true`,
 never 500.
 
