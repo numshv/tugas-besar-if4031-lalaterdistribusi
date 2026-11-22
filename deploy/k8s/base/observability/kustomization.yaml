@@ -17,3 +17,4 @@ configMapGenerator:
       - bnpb-overview.json
       - bnpb-reliability.json
       - bnpb-storage.json
+      - bnpb-streams.json
