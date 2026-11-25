@@ -164,7 +164,7 @@ development only).
 # every node: same k3s version, pinned through the installer's own variable
 export INSTALL_K3S_VERSION=v1.37.2+k3s1
 # node-a
-sudo -E NODE_NAME=node-a bash infra/k3s/install-server.sh          # prints the join token
+sudo -E NODE_NAME=node-a bash infra/k3s/install-server.sh          # prints the join token; also installs infra/k3s/traefik-config.yaml (2 Traefik replicas on different nodes)
 # node-b, node-c, node-d
 sudo -E NODE_NAME=node-b SERVER_IP=<node-a ip> TOKEN=<token> bash infra/k3s/install-agent.sh
 # nodes on different laptops over Tailscale: add NODE_IP=<tailscale ip> FLANNEL_IFACE=tailscale0
@@ -215,6 +215,7 @@ kubectl exec -n tester-agent daemonset/tester-agent -- /app list
 |---|---|---|
 | `MONGO_SLOT_NODES` | `.env` | Node for Mongo slots a b c d, in that order |
 | `PANTAI_AUTH_TOKEN` | `.env` → Secret `pantai-token` | Shared token of Sensor Pantai and coastal-ingester |
+| `PANTAI_KEY` | `.env` → Secret `pantai-key` | Exam key from the assistants, mounted as `/var/run/pantai/key`; `overlays/demo` runs the sensor with `PANTAI_PROFILE=exam` |
 | `AUDIT_TOKENS`, `SATELLITE_TOKEN`, `GRAFANA_ADMIN_PASSWORD` | `.env` (optional) | Audit API tokens, Feed Satelit token, Grafana admin password |
 | `LEASE_DURATION_SECONDS` / `LEASE_RENEW_DEADLINE_SECONDS` / `LEASE_RETRY_PERIOD_SECONDS` | aggregator env | Leader lease timing (15 / 10 / 2) |
 | `SENSOR_REQUEST_TIMEOUT_MS`, `SENSOR_MAX_RETRIES`, `SENSOR_BREAKER_FAILURES`, `SENSOR_BREAKER_OPEN_MS`, `SENSOR_MAX_CONCURRENCY` | `deploy/k8s/base/coastal-ingester` | Timeout 2000, 2 retries with jitter, breaker opens after 5 failures for 10 s, bulkhead 2 |

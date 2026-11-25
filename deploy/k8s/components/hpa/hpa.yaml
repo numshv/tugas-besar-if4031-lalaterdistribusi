@@ -2,6 +2,7 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: aggregator
+  namespace: sistem-informasi-kebencanaan-bnpb
   labels:
     app.kubernetes.io/part-of: bnpb
 spec:
@@ -26,6 +27,7 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: client-api
+  namespace: sistem-informasi-kebencanaan-bnpb
   labels:
     app.kubernetes.io/part-of: bnpb
 spec:

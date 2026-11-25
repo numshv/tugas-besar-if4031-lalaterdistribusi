@@ -112,6 +112,14 @@ apply_secrets() {
   value="$(env_get PANTAI_AUTH_TOKEN)"
   kubectl -n "$NS" create secret generic pantai-token \
     --from-literal=token="$value" --dry-run=client -o yaml | kubectl apply -f -
+  value=""
+  grep -qE "^PANTAI_KEY=" "$ROOT/.env" && value="$(env_get PANTAI_KEY)"
+  if [ -n "$value" ]; then
+    kubectl -n "$NS" create secret generic pantai-key \
+      --from-literal=key="$value" --dry-run=client -o yaml | kubectl apply -f -
+  else
+    echo "warning: PANTAI_KEY not set in .env, sensor-pantai runs without /var/run/pantai/key"
+  fi
 }
 
 label_slots() {

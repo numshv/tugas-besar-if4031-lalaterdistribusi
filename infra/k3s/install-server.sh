@@ -9,5 +9,6 @@ args=(server --node-name "${NODE_NAME:-node-a}" --write-kubeconfig-mode 644 --se
 [ -n "${FLANNEL_IFACE:-}" ] && args+=(--flannel-iface "$FLANNEL_IFACE")
 
 curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="${args[*]}" sh -
+install -m 600 "$(dirname "$0")/traefik-config.yaml" /var/lib/rancher/k3s/server/manifests/traefik-config.yaml
 echo "join token for the agents:"
 cat /var/lib/rancher/k3s/server/node-token

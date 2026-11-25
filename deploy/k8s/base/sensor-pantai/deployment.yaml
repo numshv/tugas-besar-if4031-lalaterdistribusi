@@ -41,6 +41,9 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: pantai-key
+              mountPath: /var/run/pantai
+              readOnly: true
           resources:
             requests:
               memory: 128Mi
@@ -49,3 +52,7 @@ spec:
       volumes:
         - name: data
           emptyDir: {}
+        - name: pantai-key
+          secret:
+            secretName: pantai-key
+            optional: true
